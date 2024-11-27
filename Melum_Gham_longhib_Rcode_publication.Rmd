@@ -1,0 +1,3716 @@
+---
+title: "Melum_Gham_Longhib_Rcode"
+author: "Vebjørn Jacobsen Melum"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Library
+
+```{r load required packages, message=FALSE, results='hide'}
+library(tidyverse)
+library(reshape2)
+library(lubridate)
+library(anytime)
+library(scales)
+library(RColorBrewer)
+library(pander)
+library(gt)
+library(kableExtra)
+library(float)
+library(shiny)
+library(ggpubr)
+library(AnnotationDbi)
+library(limma)
+library(edgeR)
+library(biomaRt)
+library(org.Mm.eg.db)
+library(ensembldb)
+library(data.table)
+library(statmod)
+library(viridis)
+library(readxl)
+library(EnhancedVolcano)
+suppressPackageStartupMessages(library(ComplexHeatmap))
+library(readr)
+library(janitor)
+library(colorRamp2)
+
+```
+
+# Core body temperature analysis 
+
+## Import of Ibutton data
+
+```{r Import of Ibutton data}
+
+listfile <- list.files("BT_data_sorted",pattern = ".txt",full.names = T, recursive = TRUE)
+
+head(listfile)
+tail(listfile)
+
+for (i in 1:length(listfile)){
+  if(i==1){
+    assign(paste0("Data"), read.table(listfile[i],header = TRUE, sep = "\t", dec = ","))
+  }
+  
+  if(!i==1){
+    
+    assign(paste0("Test",i), read.table(listfile[i],header = TRUE, sep = "\t", dec=","))
+    Data <- rbind(Data,get(paste0("Test",i)))
+    rm(list = ls(pattern = "Test"))
+  }
+
+}
+
+rm(list = ls(pattern = "list.+?"))
+
+str(Data)
+
+# for some reason dont read in Torpid group, do this manually
+
+
+S26 <- read.table("BT_data_sorted/Torpid/S26.txt",header = TRUE, sep = "\t", dec = ",")
+S28 <- read.table("BT_data_sorted/Torpid/S28.txt",header = TRUE, sep = "\t", dec = ",")
+S29 <- read.table("BT_data_sorted/Torpid/S29.txt",header = TRUE, sep = "\t", dec = ",")
+S35 <- read.table("BT_data_sorted/Torpid/S35.txt",header = TRUE, sep = "\t", dec = ",")
+S41 <- read.table("BT_data_sorted/Torpid/S41.txt",header = TRUE, sep = "\t", dec = ",")
+S59 <- read.table("BT_data_sorted/Torpid/S59.txt",header = TRUE, sep = "\t", dec = ",")
+
+
+torpid_df <- rbind(S26,S28, S29, S35, S41, S59)
+
+Data <- rbind(Data, torpid_df)
+
+#Have now a data frame that contains all individuals in all groups, with date, time and BT, need to convert as previously for all whole datafram at once
+
+Data$Datetime<-paste(Data$Date,Data$Time)
+
+Data$DatePOSIX<-as.POSIXct(strptime(Data$Datetime, format= "%d.%m.%Y %H:%M:%S"))
+
+
+# want to add on UNIX time, to standardize all individuals, to allow comparison. 
+
+Data$unix<-as.numeric(Data$DatePOSIX)
+
+#Need to remove blanks 
+
+data2<-Data[!(Data$ID==""), ]
+data2<-data2[!(data2$Group==""), ]
+
+#data2$Fix_date_time <- dmy_hm(data$Datetime)
+
+#ok can now start to do stuff. 
+
+#convert to tibble
+data_tb <- as_tibble(data2)
+
+summary(data_tb)
+
+# Need to clean up datapoints, remove points collected before inside animal and after death etc. 
+# Need to specify when experiment start, and remove datapoints when animal died. 
+lims_prehib_LP22 <- as.POSIXct(strptime(c("27/12/19 10:00","06/01/20 10:00"), format = "%d/%m/%y %H:%M", tz="GMT"))
+lims_prehib_SP8 <- as.POSIXct(strptime(c("6/01/20 10:00","03/02/20 10:00"), format = "%d/%m/%y %H:%M", tz="GMT"))
+
+#data$Fix_date_time <- dmy_hm(data$Datetime)
+
+#in ggplot use:
+#scale_x_datetime(date_breaks = "24 hours",limits = lims, labels = date_format("%b %d - %H:%M"))
+#to limit x-axis 
+
+# Fix order of factors to display correctly:
+data_tb$Group <- factor(data_tb$Group,levels = c("LP1", "LP2", "Pre-hib","Non-hib", "IBA", "Torpid", "Post-hib"))
+
+```
+
+
+## Time spent torpid prior to sampling
+To interpret the transcriptomic data, we need to know where in the torpor bout the animals were at sampling.
+
+```{r S26}
+
+#  time torpid S26 
+
+
+start_time = as.POSIXct("2020-03-11")
+
+end_time = as.POSIXct("2020-03-14")
+
+Time_S26_euth <- Data %>% 
+  filter(ID=="S26") %>% 
+  filter(DatePOSIX >= start_time & DatePOSIX <= end_time) %>% 
+  mutate(is_torp= BT< 10) %>% 
+  arrange(DatePOSIX) %>%  # Ensure data is sorted by DatePOSIX
+  mutate(Time_Diff = if_else(is_torp, difftime(lead(DatePOSIX), DatePOSIX, units = "mins"), NA_real_)) %>%
+  filter(is_torp)  # Keep only rows where temperature is >= 34 degrees
+
+# Calculate the total time where BT >= 34 degrees
+total_time_below_10 <- sum(Time_S26_euth$Time_Diff, na.rm = TRUE)
+
+# Print the result
+print(paste("Total time with BT < 10 degrees:", total_time_below_10, "minutes"))
+
+#"Total time with BT < 10 degrees: 1160  minutes"
+
+
+
+```
+
+```{r S29}
+
+#  time torpid S29
+
+
+start_time = as.POSIXct("2020-03-11")
+
+end_time = as.POSIXct("2020-03-14")
+
+Time_S29_euth <- Data %>% 
+  filter(ID=="S29") %>% 
+  filter(DatePOSIX >= start_time & DatePOSIX <= end_time) %>% 
+  mutate(is_torp= BT< 10) %>% 
+  arrange(DatePOSIX) %>%  # Ensure data is sorted by DatePOSIX
+  mutate(Time_Diff = if_else(is_torp, difftime(lead(DatePOSIX), DatePOSIX, units = "mins"), NA_real_)) %>%
+  filter(is_torp)  # Keep only rows where temperature is >= 34 degrees
+
+# Calculate the total time where BT >= 34 degrees
+total_time_below_10 <- sum(Time_S29_euth$Time_Diff, na.rm = TRUE)
+
+# Print the result
+print(paste("Total time with BT < 10 degrees:", total_time_below_10, "minutes"))
+
+#"Total time with BT < 10 degrees: 1660  minutes"
+
+
+
+```
+
+```{r S59}
+
+#  time torpid S59
+
+
+start_time = as.POSIXct("2020-02-29")
+
+end_time = as.POSIXct("2020-03-04")
+
+Time_S59_euth <- Data %>% 
+  filter(ID=="S59") %>% 
+  filter(DatePOSIX >= start_time & DatePOSIX <= end_time) %>% 
+  mutate(is_torp= BT< 10) %>% 
+  arrange(DatePOSIX) %>%  # Ensure data is sorted by DatePOSIX
+  mutate(Time_Diff = if_else(is_torp, difftime(lead(DatePOSIX), DatePOSIX, units = "mins"), NA_real_)) %>%
+  filter(is_torp)  # Keep only rows where temperature is >= 34 degrees
+
+# Calculate the total time where BT >= 34 degrees
+total_time_below_10 <- sum(Time_S59_euth$Time_Diff, na.rm = TRUE)
+
+# Print the result
+print(paste("Total time with BT < 10 degrees:", total_time_below_10, "minutes"))
+
+#"Total time with BT < 10 degrees: x  minutes"
+
+
+
+```
+
+```{r S28}
+
+#  time torpid S28
+
+
+start_time = as.POSIXct("2020-03-02")
+
+end_time = as.POSIXct("2020-03-04")
+
+Time_S28_euth <- Data %>% 
+  filter(ID=="S28") %>% 
+  filter(DatePOSIX >= start_time & DatePOSIX <= end_time) %>% 
+  mutate(is_torp= BT< 10) %>% 
+  arrange(DatePOSIX) %>%  # Ensure data is sorted by DatePOSIX
+  mutate(Time_Diff = if_else(is_torp, difftime(lead(DatePOSIX), DatePOSIX, units = "mins"), NA_real_)) %>%
+  filter(is_torp)  # Keep only rows where temperature is >= 34 degrees
+
+# Calculate the total time where BT >= 34 degrees
+total_time_below_10 <- sum(Time_S28_euth$Time_Diff, na.rm = TRUE)
+
+# Print the result
+print(paste("Total time with BT < 10 degrees:", total_time_below_10, "minutes"))
+
+#"Total time with BT < 10 degrees: 1600  minutes"
+
+
+
+```
+
+```{r S35}
+
+#  time torpid S35
+
+
+start_time = as.POSIXct("2020-03-02")
+
+end_time = as.POSIXct("2020-03-04")
+
+Time_S35_euth <- Data %>% 
+  filter(ID=="S35") %>% 
+  filter(DatePOSIX >= start_time & DatePOSIX <= end_time) %>% 
+  mutate(is_torp= BT< 10) %>% 
+  arrange(DatePOSIX) %>%  # Ensure data is sorted by DatePOSIX
+  mutate(Time_Diff = if_else(is_torp, difftime(lead(DatePOSIX), DatePOSIX, units = "mins"), NA_real_)) %>%
+  filter(is_torp)  # Keep only rows where temperature is >= 34 degrees
+
+# Calculate the total time where BT >= 34 degrees
+total_time_below_10 <- sum(Time_S35_euth$Time_Diff, na.rm = TRUE)
+
+# Print the result
+print(paste("Total time with BT < 10 degrees:", total_time_below_10, "minutes"))
+
+#"Total time with BT < 10 degrees: 2060 minutes"
+
+
+
+```
+
+
+```{r S41}
+
+#  time torpid S41
+
+
+start_time = as.POSIXct("2020-03-22")
+
+end_time = as.POSIXct("2020-03-25")
+
+Time_S41_euth <- Data %>% 
+  filter(ID=="S41") %>% 
+  filter(DatePOSIX >= start_time & DatePOSIX <= end_time) %>% 
+  mutate(is_torp= BT< 10) %>% 
+  arrange(DatePOSIX) %>%  # Ensure data is sorted by DatePOSIX
+  mutate(Time_Diff = if_else(is_torp, difftime(lead(DatePOSIX), DatePOSIX, units = "mins"), NA_real_)) %>%
+  filter(is_torp)  # Keep only rows where temperature is < 10 degrees
+
+# Calculate the total time where BT >= 34 degrees
+total_time_below_10 <- sum(Time_S41_euth$Time_Diff, na.rm = TRUE)
+
+# Print the result
+print(paste("Total time with BT < 10 degrees:", total_time_below_10, "minutes"))
+
+#"Total time with BT < 10 degrees: 1460 minutes"
+
+
+
+```
+
+
+
+## Time spent euthermic prior to sampling
+By just looking at the last torpor bout, can easily calculate time above 34 degrees prior to sampling. 
+modify code from looking at mean temperature to look at time duration above 34 degrees. 
+
+```{r time S10 }
+
+#  time eutheric S10 
+
+start_time = as.POSIXct("2020-03-10")
+
+end_time = as.POSIXct("2020-03-16")
+
+Time_S10_euth <- Data %>% 
+  filter(ID=="S10") %>% 
+  filter(DatePOSIX >= start_time & DatePOSIX <= end_time) %>% 
+  mutate(is_IBE= BT>= 34,
+         is_arousal= BT>=10) %>% 
+  arrange(DatePOSIX) %>%  # Ensure data is sorted by DatePOSIX
+  mutate(Time_Diff_IBE = if_else(is_IBE, difftime(lead(DatePOSIX), DatePOSIX, units = "mins"), NA_real_)) %>%
+  filter(is_IBE)  # Keep only rows where temperature is >= 34 degrees
+
+# Calculate the total time where BT >= 34 degrees
+total_time_above_34 <- sum(Time_S10_euth$Time_Diff_IBE, na.rm = TRUE)
+
+# Print the result
+print(paste("Total time with BT >= 34 degrees:", total_time_above_34, "minutes"))
+
+### "Total time with BT >= 34 degrees: 1820 minutes"
+    
+
+
+
+
+BT_S10_euth
+
+
+
+```
+
+```{r S30}
+
+#  time eutheric S30 
+
+start_time = as.POSIXct("2020-03-25")
+
+end_time = as.POSIXct("2020-03-28")
+
+Time_S30_euth <- Data %>% 
+  filter(ID=="S30") %>% 
+  filter(DatePOSIX >= start_time & DatePOSIX <= end_time) %>% 
+  mutate(is_IBE= BT>= 34) %>% 
+  arrange(DatePOSIX) %>%  # Ensure data is sorted by DatePOSIX
+  mutate(Time_Diff = if_else(is_IBE, difftime(lead(DatePOSIX), DatePOSIX, units = "mins"), NA_real_)) %>%
+  filter(is_IBE)  # Keep only rows where temperature is >= 34 degrees
+
+# Calculate the total time where BT >= 34 degrees
+total_time_above_34 <- sum(Time_S30_euth$Time_Diff, na.rm = TRUE)
+
+# Print the result
+print(paste("Total time with BT >= 34 degrees:", total_time_above_34, "minutes"))
+
+
+
+```
+
+```{r S47}
+
+#  time eutheric S30 
+
+start_time = as.POSIXct("2020-03-20")
+
+end_time = as.POSIXct("2020-03-24")
+
+Time_S47_euth <- Data %>% 
+  filter(ID=="S47") %>% 
+  filter(DatePOSIX >= start_time & DatePOSIX <= end_time) %>% 
+  mutate(is_IBE= BT>= 34) %>% 
+  arrange(DatePOSIX) %>%  # Ensure data is sorted by DatePOSIX
+  mutate(Time_Diff = if_else(is_IBE, difftime(lead(DatePOSIX), DatePOSIX, units = "mins"), NA_real_)) %>%
+  filter(is_IBE)  # Keep only rows where temperature is >= 34 degrees
+
+# Calculate the total time where BT >= 34 degrees
+total_time_above_34 <- sum(Time_S47_euth$Time_Diff, na.rm = TRUE)
+
+# Print the result
+print(paste("Total time with BT >= 34 degrees:", total_time_above_34, "minutes"))
+
+#"Total time with BT >= 34 degrees: 1380 minutes"
+
+```
+
+```{r S45}
+
+#  time eutheric S45 
+
+
+start_time = as.POSIXct("2020-04-01")
+
+end_time = as.POSIXct("2020-04-03")
+
+Time_S45_euth <- Data %>% 
+  filter(ID=="S45") %>% 
+  filter(DatePOSIX >= start_time & DatePOSIX <= end_time) %>% 
+  mutate(is_IBE= BT>= 34) %>% 
+  arrange(DatePOSIX) %>%  # Ensure data is sorted by DatePOSIX
+  mutate(Time_Diff = if_else(is_IBE, difftime(lead(DatePOSIX), DatePOSIX, units = "mins"), NA_real_)) %>%
+  filter(is_IBE)  # Keep only rows where temperature is >= 34 degrees
+
+# Calculate the total time where BT >= 34 degrees
+total_time_above_34 <- sum(Time_S45_euth$Time_Diff, na.rm = TRUE)
+
+# Print the result
+print(paste("Total time with BT >= 34 degrees:", total_time_above_34, "minutes"))
+
+#"Total time with BT >= 34 degrees: 1480 minutes"
+
+BT_S45_euth
+
+```
+
+```{r S36}
+
+#  time eutheric S36 
+
+
+start_time = as.POSIXct("2020-03-26")
+
+end_time = as.POSIXct("2020-03-28")
+
+Time_S36_euth <- Data %>% 
+  filter(ID=="S36") %>% 
+  filter(DatePOSIX >= start_time & DatePOSIX <= end_time) %>% 
+  mutate(is_IBE= BT>= 34) %>% 
+  arrange(DatePOSIX) %>%  # Ensure data is sorted by DatePOSIX
+  mutate(Time_Diff = if_else(is_IBE, difftime(lead(DatePOSIX), DatePOSIX, units = "mins"), NA_real_)) %>%
+  filter(is_IBE)  # Keep only rows where temperature is >= 34 degrees
+
+# Calculate the total time where BT >= 34 degrees
+total_time_above_34 <- sum(Time_S36_euth$Time_Diff, na.rm = TRUE)
+
+# Print the result
+print(paste("Total time with BT >= 34 degrees:", total_time_above_34, "minutes"))
+
+#"Total time with BT >= 34 degrees: 1260 minutes"
+
+BT_S36_euth
+
+```
+
+```{r S49}
+
+#  time eutheric S49 
+
+
+start_time = as.POSIXct("2020-03-30")
+
+end_time = as.POSIXct("2020-04-03")
+
+Time_S49_euth <- Data %>% 
+  filter(ID=="S49") %>% 
+  filter(DatePOSIX >= start_time & DatePOSIX <= end_time) %>% 
+  mutate(is_IBE= BT>= 34) %>% 
+  arrange(DatePOSIX) %>%  # Ensure data is sorted by DatePOSIX
+  mutate(Time_Diff = if_else(is_IBE, difftime(lead(DatePOSIX), DatePOSIX, units = "mins"), NA_real_)) %>%
+  filter(is_IBE)  # Keep only rows where temperature is >= 34 degrees
+
+# Calculate the total time where BT >= 34 degrees
+total_time_above_34 <- sum(Time_S49_euth$Time_Diff, na.rm = TRUE)
+
+# Print the result
+print(paste("Total time with BT >= 34 degrees:", total_time_above_34, "minutes"))
+
+#"Total time with BT >= 34 degrees: 1160  minutes"
+
+BT_S49_euth
+
+```
+
+
+
+
+## Figure 1B
+
+### LP
+
+Remove start of ibutton prior to inside animal. filter time limits, 7 days after surgery. 
+
+```{r mean Tb LP}
+
+df_LP <- data_tb %>% 
+  filter(ID%in% c("S55", "S27", "S9", "S53", "S51", "S8"))
+
+# do not need special functions, just look at mean Tb. 
+
+lims_prehib_LP22 <- as.POSIXct(strptime(c("27/12/19 10:00","06/01/20 10:00"), format = "%d/%m/%y %H:%M", tz="GMT"))
+lims_prehib_SP8 <- as.POSIXct(strptime(c("6/01/20 10:00","03/02/20 10:00"), format = "%d/%m/%y %H:%M", tz="GMT"))
+
+df_LP_mean <- df_LP %>% 
+  filter(DatePOSIX >= "2020-01-06") %>% 
+  group_by(ID) %>% 
+  summarise(
+    mean_temp = mean(BT, na.rm = TRUE),
+    std_temp = sd(BT, na.rm = TRUE)
+  )
+
+
+ggplot(df_LP_mean, aes(x = ID, y = mean_temp)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = mean_temp, ymax = mean_temp), width = 0.2) +
+  labs(x = "Individual", y = "Mean IBE Temperature (\u00B0C)", title = "Mean Temperature per Individual") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  stat_compare_means()  # Add comparison of means (from ggpubr)
+
+
+write.table(df_LP_mean, file="output/LP_mean_BT_20240418.txt", row.names = FALSE)
+
+```
+
+### Prehib
+
+```{r Prehib core BT, fig.ncol = 3, out.width="90%", fig.align='center', fig.cap="\\label{fig:figs} Core body tempreature of Pre-hib group. The transfer from LP 22 degrees to SP 8 degrees occured on the 6th of January.", fig.subcap=c("All individuals plotted with a smooth trendline showning 95 % confidence interval with the use of an generalized additive model.", "All individuals plotted with a smooth trendline showning 95 % confidence interval with the use of an generalized linear model.", "All individuals plotted with a smooth trendline showning 95 % confidence interval with the use of an linear model.")}
+
+### mean BT graph for Pre-hib group to see if temperature set point is adjusted downwards prior to hibernation onset. 
+# have used same template as previously, need to adjust for each individual before pooling together. 
+
+Prehib_plot<- data_tb %>% 
+  filter(Group%in%c("Pre-hib")) %>%
+  ggplot(aes(x = DatePOSIX))+
+  geom_point(aes(y = BT), colour = "#4fb1c7b6",size=0.5, alpha=0.9)+
+  geom_smooth(aes(y = BT),
+              se=TRUE,
+              level=0.95,
+              colour = "black")+ 
+  scale_x_datetime(date_breaks="1 weeks",
+                   name="Dates")+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle=90, vjust=0.5, size=14))+
+  ylab("Core Body Temperature (\u00B0C)")
+  
+
+
+Prehib_plot
+
+ggsave("Output/Prehib_plot_20240410.png", 
+       plot=Prehib_plot, 
+       dpi=300,
+       width = 10, 
+       height= 14,
+       units=c("cm"))
+  
+### Difficul to add a vline since the xintercept (ie dates) are not understood by R... 
+#geom_vline(xintercept=, color="orange", size=1)
+
+###Prehib, different method in smooth function:
+Prehib_plot2<- data_tb %>% 
+  filter(Group%in%c("Pre-hib")) %>%
+  ggplot(aes(x = DatePOSIX))+
+  geom_point(aes(y = BT), colour = "blue",size=0.5)+
+  geom_smooth(aes(y = BT),
+              method = "glm",
+              se=TRUE,
+              level=0.95,
+              colour = "black")+ 
+  scale_x_datetime(date_breaks="1 weeks",
+                   name="Dates")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle=90, vjust=0.5, size=14))+
+  ylab("Core Body Temperature (\u00B0C)")
+
+Prehib_plot2
+
+###Prehib, different method in smooth function:
+Prehib_plot3<- data_tb %>% 
+  filter(Group%in%c("Pre-hib")) %>%
+  ggplot(aes(x = DatePOSIX))+
+  geom_point(aes(y = BT), colour = "blue",size=0.5)+
+  geom_smooth(aes(y = BT),
+              method = "lm",
+              se=TRUE,
+              level=0.95,
+              colour = "black")+ 
+  scale_x_datetime(date_breaks="1 weeks",
+                   name="Dates")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle=90, vjust=0.5, size=14))+
+  ylab("Core Body Temperature (\u00B0C)")
+
+
+Prehib_plot3
+
+
+```
+
+This shows the progressive changes for the whole period from LP22 to SP8. Would like to make a mean of this group when in LP22 and when in SP8. 
+
+```{r Mean BT setpoint in Prehib LP vs SP, }
+#define period in LP22 and SP8: 
+lims_prehib_LP22 <- as.POSIXct(strptime(c("27/12/19 10:00","06/01/20 10:00"), format = "%d/%m/%y %H:%M", tz="GMT"))
+lims_prehib_SP8 <- as.POSIXct(strptime(c("6/01/20 10:00","03/02/20 10:00"), format = "%d/%m/%y %H:%M", tz="GMT"))
+
+cut.POSIXt(lims_prehib_LP22, breaks = "week")
+
+
+# still strugel to handel datatime in a pipe:
+data_tb %>%
+  filter(Group%in%"Pre-hib") %>% 
+  mutate(Ambientcond= case_when(DatePOSIX >= ymd_hms("2019-12-27 10:00:00") & DatePOSIX<= ymd_hms("2020-01-06 10:00:00" ~ "PrehibLP22"), DatePOSIX >= ymd_hms("2020-01-06 10:00:00") & DatePOSIX<=ymd_hms("2020-02-04 10:00:00") ~ "PrehibSP8", TRUE ~ NA_character_)) %>%
+  group_by(ID) %>%
+  summarize(mean_BTind=mean(BT,na.rm=T),
+            median_BTind= median(BT,na.rm=T),
+            std_BTind=sd(BT,na.rm = T))
+## Question is if I can actually just use UNiX time in stead
+# need to have a unix ref system to know which is which 
+#how to convert from unix to posix time:
+value <- 1284101485
+
+as.Date(as.POSIXct(value, origin="1970-01-01"))
+
+# convert from posix to unix:
+as.numeric(as.POSIXct("2020-01-06 10:00:00"))
+  as.numeric(as.POSIXct("2019-12-27 10:00:00"))
+  
+prehib_cond <- data_tb %>%
+  filter(Group%in%"Pre-hib") %>% 
+  mutate(Ambientcond= case_when(unix >= as.numeric(as.POSIXct("2019-12-27 10:00:00")) & unix <= as.numeric(as.POSIXct("2020-01-06 10:00:00")) ~ "PrehibLP22", 
+                                unix >= as.numeric(as.POSIXct("2020-01-06 10:00:00")) & unix <= as.numeric(as.POSIXct("2020-02-04 10:00:00")) ~ "PrehibSP8", 
+                                TRUE ~ NA_character_)) %>%
+  group_by(ID, Ambientcond) %>%
+  drop_na(Ambientcond) %>% 
+  summarize(mean_BTind=mean(BT,na.rm=T),
+            median_BTind= median(BT,na.rm=T),
+            std_BTind=sd(BT,na.rm = T))
+
+
+col.pal3<-brewer.pal(2, "Pastel1")
+
+
+prehib_cond_plot <- prehib_cond %>% 
+   filter(! ID == "S46") %>% 
+  ggplot(aes(x= Ambientcond, y= mean_BTind))+ 
+  geom_boxplot(fill= c("#f5bd82","lightblue"), width=0.3) +
+  geom_jitter(color="black", size=1, alpha=0.9, width= 0.1)+ 
+  theme_minimal()+
+  xlab("Ambient condition") +
+  ylab("Individual mean of Body temperature")+
+  ylim(35,38)
+
+
+prehib_cond_plot
+
+
+ggsave("Output/Prehib_meanBT_LP22_SP8_V2_20240311.png", plot= prehib_cond_plot, dpi=300)
+
+
+prehib_cond_plot2 <- prehib_cond %>%
+  filter(! ID == "S46") %>% 
+  ggplot(aes(x= Ambientcond, y= mean_BTind))+ 
+  geom_boxplot(fill= c("#f5bd82","lightblue"), width=0.3) +
+  geom_point(color="black", size=1, alpha=0.9, width=0.1)+ 
+  theme_minimal()+
+  xlab("Ambient condition") +
+  ylab("Individual mean of Body temperature")+
+  ylim(35,38)
+
+
+prehib_cond_plot2
+
+ggsave("Output/Prehib_meanBT_LP22_SP8_V4_20240312.png", plot= prehib_cond_plot2, dpi=300, height = 3, width = 3)
+
+
+write.table(prehib_cond, file="output/prehib_condition_BT_20240311.txt")
+
+
+```
+
+
+### Late Prehib
+
+```{r mean Tb Late Prehib}
+
+# Have named "Late prehib" - "nonhib" in code. 
+
+df_Nonhib <- data_tb %>% 
+  filter(ID%in% c("S56", "S22", "S11", "S14", "S18", "S31"))
+
+# do not need special functions, just look at mean Tb. 
+
+lims_prehib_LP22 <- as.POSIXct(strptime(c("27/12/19 10:00","06/01/20 10:00"), format = "%d/%m/%y %H:%M", tz="GMT"))
+lims_prehib_SP8 <- as.POSIXct(strptime(c("6/01/20 10:00","03/02/20 10:00"), format = "%d/%m/%y %H:%M", tz="GMT"))
+
+df_Nonhib_mean <- df_Nonhib %>% 
+  group_by(ID) %>% 
+  summarise(
+    mean_temp = mean(BT, na.rm = TRUE),
+    std_temp = sd(BT, na.rm=TRUE)
+  )
+
+
+ggplot(df_Nonhib_mean, aes(x = ID, y = mean_temp)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = mean_temp, ymax = mean_temp), width = 0.2) +
+  labs(x = "Individual", y = "Mean IBE Temperature (\u00B0C)", title = "Mean Temperature per Individual") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  stat_compare_means()  # Add comparison of means (from ggpubr)
+
+
+write.table(df_Nonhib_mean, file="output/Nonhib_mean_BT_20240418.txt", row.names = FALSE)
+
+```
+
+
+### Refractory
+
+To better illustrate the experimental progression and to retain information about day and night, I would like to bin each individual mean Tb per week after last torpor bout. This will give me a plot with mean weekly Tb on y-axis and weeks since last torpor bout on x-axis. with all individual timepoint and a group mean per week. To do this I need to bin per week per animal and then plot. 
+
+In essence this should be possible just by binning the data giving in minutes into weeks and then make a mean. 
+
+```{r posthib mean Tb per week after last torpor bout}
+
+# use the same as earlier to identify time when above 33 degrees for more than 5 days. 
+
+
+set_point <- 33 # Replace with the actual set-point temperature
+min_duration <- 5 * 24 * 60 # Duration of one week in minutes
+
+# should add on to skip 1 h after reaching this. 
+
+end_date <- as.Date("2020-06-02")
+
+df_posthib <- data_tb %>% 
+  filter(ID%in% c("S4", "S50", "S16", "S37", "S38", "S7"))
+
+df_posthib_euth <- df_posthib %>% 
+  group_by(ID) %>%
+  # Create a flag for temperatures above the set-point
+  mutate(above_set_point = BT > set_point)
+
+
+df_posthib_euth_filt <- df_posthib_euth %>% 
+  filter(DatePOSIX<= end_date)
+
+
+df_per   <- df_posthib_euth_filt %>%
+  mutate(change = above_set_point != lag(above_set_point, default = first(above_set_point))) %>%
+  # Group by continuous periods of the same status
+  mutate(period = cumsum(change)) %>%
+  # Calculate the duration of each period where the temperature is above the set-point
+  group_by(period, .add = TRUE) %>%
+  summarize(
+    start_datetime = min(DatePOSIX),
+    end_datetime = max(DatePOSIX),
+    duration = as.numeric(difftime(end_datetime, start_datetime, units = "mins")),
+    above_set_point = first(above_set_point),
+    .groups = 'drop'
+  ) %>%
+  # Filter periods that are at least one week long and where the temperature is above the set-point
+  filter(above_set_point == TRUE & duration >= min_duration)
+  
+df_quali  <- df_per %>% 
+  group_by(ID) %>% 
+  # For each individual, select the first qualifying period
+  slice(1) %>%
+  ungroup() %>%
+  # Join this information back to the original dataframe
+  select(ID, start_datetime) %>%
+  right_join(df_posthib_euth_filt, by = "ID")
+
+
+
+
+
+# Assuming 'df' has columns 'individual', 'datetime', and 'temp'
+# and 'start_datetime' is the datetime of the last torpor bout for each individual
+
+# Add a column for the week number since the last torpor bout
+df_weekly<- df_quali %>%
+  group_by(ID) %>%
+  mutate(weeks_since_torpor = floor(as.numeric(difftime(DatePOSIX, start_datetime, units = "weeks"))))
+
+# Calculate the mean temperature per animal per week
+weekly_means <- df_weekly %>%
+  group_by(ID, weeks_since_torpor) %>%
+  summarize(mean_BT = mean(BT, na.rm = TRUE),
+    std_temp = sd(BT, na.rm=TRUE)) %>%
+  ungroup()
+
+# Calculate the overall mean of the individual means per week
+overall_weekly_means <- weekly_means %>%
+  group_by(weeks_since_torpor) %>% 
+  summarize(overall_mean_temp = mean(mean_BT)) %>%
+  ungroup()
+
+
+# Plot the data using ggplot2
+ggplot(weekly_means, aes(x = weeks_since_torpor, y = mean_BT)) +
+  geom_point() + # Use geom_point() to show the data points
+  labs(x = "Weeks since last torpor bout", y = "Mean weekly body temperature") +
+  xlim(0,2)+
+  ylim(35,37)+
+  theme_classic() +
+  theme(legend.position = "none") # Remove the legend if there are many individuals
+
+## Would like to add on mean and SEM. 
+
+
+weekly_mean_posthib_plot <- ggpubr::ggerrorplot(data= weekly_means,
+                              x= "weeks_since_torpor",
+                              y= "mean_BT",
+                              desc_stat = "mean_se")
+
+
+
+weekly_mean_posthib <- ggpar(weekly_mean_posthib_plot,
+                             xlim = c(0,2),
+                             ylim=c(30,39))
+
+
+weekly_mean_posthib
+
+
+```
+
+Try again in a new chunck
+
+
+```{r retry mean weekly temp}
+
+# first calcualte individual mean per week. Then group and SEM 
+
+weekly_means_ind <- df_weekly %>%
+  group_by(ID, weeks_since_torpor) %>%
+  summarize(mean_ind_BT = mean(BT, na.rm = TRUE),
+            sd = sd(BT, na.rm = TRUE),
+    n = n(),
+    sem = sd / sqrt(n)
+  ) %>%
+  ungroup()
+
+write.table(weekly_means_ind, file="output/weekly_means_ind_posthib_euthermic.txt", row.names = FALSE)
+
+weekly_means_all <- df_weekly %>%
+  group_by(weeks_since_torpor) %>%
+  summarize(mean_overall_BT = mean(BT, na.rm = TRUE),
+            sd = sd(BT, na.rm = TRUE),
+    n = n(),
+    sem = sd / sqrt(n)
+  ) %>%
+  ungroup()
+
+
+# Plot the means with error bars representing SEM
+ggplot(weekly_means_all, aes(x = weeks_since_torpor, y = mean_overall_BT)) +
+  geom_point(stat = "identity") + # Use geom_bar() to create a bar plot
+  geom_errorbar(
+    aes(ymin = mean_overall_BT - sem, ymax = mean_overall_BT + sem), # Set the limits of the error bars
+    width = 0.2
+  ) +
+  xlim(0,2)+
+  ylim(33,38)+
+  labs(x = "Weeks since last torpor", y = "Mean overall BT") +
+  theme_classic()
+
+
+```
+
+
+```{r rerun with a new rapid decline threshold to remove entry timepoints}
+
+
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+
+# Assuming your data frame is named 'df_posthib' with columns 'ID', 'BT', and 'DatePOSIX'
+
+# Step 1: Identify IBE periods for each individual and exclude rapid declines
+df_posthib_TA_IBE <- df_posthib %>%
+  arrange(ID, DatePOSIX) %>%
+  group_by(ID) %>%
+  mutate(
+    is_IBE = BT >= 34 & BT <= 38,  # Identify IBE state
+    is_IBE_start = is_IBE & (lag(is_IBE, default = FALSE) == FALSE),  # Start of IBE period
+    is_below_30 = BT < 33,  # Temperature drops below 33 degrees
+    BT_change = BT - lag(BT, default = BT[1]),  # Change in BT from previous measurement
+    Time_change = as.numeric(difftime(DatePOSIX, lag(DatePOSIX, default = DatePOSIX[1]), units = "secs")),  # Change in time from previous measurement in seconds
+    BT_rate = BT_change / (Time_change / 3600)  # Rate of BT change in degrees per hour
+  ) %>%
+  mutate(
+    is_rapid_decline = BT_rate < -1.5,  # Identify rapid decline (more than 1.5 degrees per hour)
+    IBE_group = cumsum(is_IBE_start)  # Group by IBE periods
+  ) %>%
+  filter(is_IBE) %>%
+  group_by(ID, IBE_group) %>%
+  mutate(
+    exclude_below_30_or_rapid_decline = cumany(is_below_30 | is_rapid_decline)  # Flag to exclude data points after dropping below 33 or rapid decline
+  ) %>%
+  filter(!exclude_below_30_or_rapid_decline) %>%
+  # Exclude the first 4 hour after reaching 34 degrees
+  filter(DatePOSIX - lag(DatePOSIX, default = first(DatePOSIX)) > 14400 | row_number() == 1) %>%
+  summarise(
+    mean_IBE_temp = mean(BT, na.rm = TRUE),  # Calculate mean temperature for IBE period
+    .groups = 'drop'
+  ) %>%
+  # Calculate the mean temperature per individual across all IBE periods
+  group_by(ID) %>%
+  summarise(
+    mean_IBE_temp = mean(mean_IBE_temp, na.rm = TRUE),
+    std_BTind=sd(BT,na.rm = T)
+  )
+
+ # save 
+ write.table(df_posthib_TA_IBE, file="output/IBE_period_refractory_ID_20240418.txt", row.names = FALSE)
+
+
+ggplot(df_posthib_TA_IBE, aes(x = ID, y = mean_IBE_temp)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = mean_IBE_temp, ymax = mean_IBE_temp), width = 0.2) +
+  labs(x = "Individual", y = "Mean IBE Temperature (\u00B0C)", title = "Mean IBE Temperature per Individual") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  stat_compare_means()  # Add comparison of means (from ggpubr)
+
+
+
+
+```
+
+
+### IBE
+Since the individuals startet to TA-cycle at a various time-point, I would like to define IBE by a preceding torpor bout. I add on the criterion BT<=34 prior to isIBE to qualify. This will take care of the differences in onset of TA-cycle, and would allow me to look at only the Bt in the IBE period. 
+
+```{r mean Tb IBE}
+
+data_tb %>% 
+  distinct(ID)
+
+
+df_IBE <- data_tb %>% 
+  filter(ID%in% c("S10", "S30", "S47", "S45", "S36", "S49"))
+
+df_IBE_TA <- df_IBE %>% 
+  filter(DatePOSIX >= "2020-03-02")
+
+
+# Step 1: Identify IBE periods for each individual and exclude rapid declines
+df_IBE_TA_mean <- df_IBE %>%
+  arrange(ID, DatePOSIX) %>%
+  group_by(ID) %>%
+  mutate( 
+    below_20_previously = cummax(BT < 20),
+    is_IBE = BT >= 34 & BT <= 38 & below_20_previously,  # Identify IBE state, with a criterion that previously torpid.
+    is_IBE_start = is_IBE & (lag(is_IBE, default = FALSE) == FALSE),  # Start of IBE period
+    is_below_30 = BT < 33,  # Temperature drops below 33 degrees
+    BT_change = BT - lag(BT, default = BT[1]),  # Change in BT from previous measurement
+    Time_change = as.numeric(difftime(DatePOSIX, lag(DatePOSIX, default = DatePOSIX[1]), units = "secs")),  # Change in time from previous measurement in seconds
+    BT_rate = BT_change / (Time_change / 3600)  # Rate of BT change in degrees per hour
+  ) %>%
+  mutate(
+    is_rapid_decline = BT_rate < -1.5,  # Identify rapid decline (more than 1.5 degrees per hour)
+    IBE_group = cumsum(is_IBE_start)  # Group by IBE periods
+  ) %>%
+  filter(is_IBE) %>%
+  group_by(ID, IBE_group) %>%
+  mutate(
+    exclude_below_30_or_rapid_decline = cumany(is_below_30 | is_rapid_decline)  # Flag to exclude data points after dropping below 33 or rapid decline
+  ) %>%
+  filter(!exclude_below_30_or_rapid_decline) %>%
+  # Exclude the first 4 hour after reaching 34 degrees
+  filter(DatePOSIX - lag(DatePOSIX, default = first(DatePOSIX)) > 14400 | row_number() == 1) %>%
+  # Calculate the mean temperature per individual across all IBE periods
+  group_by(ID) %>%
+  summarise(
+    mean_IBE_temp = mean(BT, na.rm = TRUE),
+    std_temp = sd(BT, na.rm=TRUE)
+  )
+
+ # save 
+ write.table(df_IBE_TA_mean, file="output/IBE_mean_BT_20240418.txt", row.names = FALSE)
+
+
+ggplot(df_IBE_TA_mean, aes(x = ID, y = mean_IBE_temp)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = mean_IBE_temp, ymax = mean_IBE_temp), width = 0.2) +
+  labs(x = "Individual", y = "Mean IBE Temperature (\u00B0C)", title = "Mean IBE Temperature per Individual") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  stat_compare_means()  # Add comparison of means (from ggpubr)
+
+
+
+
+```
+
+
+### Torpid group, when IBE
+
+```{r mean Tb of IBE of Torpid animals}
+
+data_tb %>% 
+  distinct(ID)
+
+
+df_Torpid <- data_tb %>% 
+  filter(ID%in% c("S59", "S28", "S35", "S29", "S26", "S41"))
+
+df_IBE_TA <- df_IBE %>% 
+  filter(DatePOSIX >= "2020-03-02")
+
+
+# Step 1: Identify IBE periods for each individual and exclude rapid declines
+df_Torpid_mean <- df_Torpid %>%
+  arrange(ID, DatePOSIX) %>%
+  group_by(ID) %>%
+  mutate( 
+    below_20_previously = cummax(BT < 20),
+    is_IBE = BT >= 34 & BT <= 38 & below_20_previously,  # Identify IBE state, with a criterion that previously torpid.
+    is_IBE_start = is_IBE & (lag(is_IBE, default = FALSE) == FALSE),  # Start of IBE period
+    is_below_30 = BT < 33,  # Temperature drops below 33 degrees
+    BT_change = BT - lag(BT, default = BT[1]),  # Change in BT from previous measurement
+    Time_change = as.numeric(difftime(DatePOSIX, lag(DatePOSIX, default = DatePOSIX[1]), units = "secs")),  # Change in time from previous measurement in seconds
+    BT_rate = BT_change / (Time_change / 3600)  # Rate of BT change in degrees per hour
+  ) %>%
+  mutate(
+    is_rapid_decline = BT_rate < -1.5,  # Identify rapid decline (more than 1.5 degrees per hour)
+    IBE_group = cumsum(is_IBE_start)  # Group by IBE periods
+  ) %>%
+  filter(is_IBE) %>%
+  group_by(ID, IBE_group) %>%
+  mutate(
+    exclude_below_30_or_rapid_decline = cumany(is_below_30 | is_rapid_decline)  # Flag to exclude data points after dropping below 33 or rapid decline
+  ) %>%
+  filter(!exclude_below_30_or_rapid_decline) %>%
+  # Exclude the first 4 hour after reaching 34 degrees
+  filter(DatePOSIX - lag(DatePOSIX, default = first(DatePOSIX)) > 14400 | row_number() == 1) %>%
+  # Calculate the mean temperature per individual across all IBE periods
+  group_by(ID) %>%
+  summarise(
+    mean_IBE_temp = mean(BT, na.rm = TRUE),
+    std_IBE_temp = sd(BT,na.rm=TRUE)
+  )
+
+ # save 
+ write.table(df_Torpid_mean, file="output/Torpid_group_mean_BT_in_IBE_V2_20240418.txt", row.names = FALSE)
+
+
+ggplot(df_Torpid_mean, aes(x = ID, y = mean_IBE_temp)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = mean_IBE_temp, ymax = mean_IBE_temp), width = 0.2) +
+  labs(x = "Individual", y = "Mean IBE Temperature (\u00B0C)", title = "Mean IBE Temperature per Individual") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  stat_compare_means()  # Add comparison of means (from ggpubr)
+
+
+ # save 
+ write.table(df_Torpid_mean, file="output/Torpid_group_mean_BT_in_IBE_20240418.txt", row.names = FALSE)
+
+```
+
+
+
+
+
+
+# Differential gene expression analysis
+
+## Import counts
+
+```{r import merged count file}
+
+
+df <- read.csv("Pre_procesed_data_STAR/counts-tanycytes-hib-exp1-strasbourg.csv", header = TRUE)
+
+```
+See that we have 1 column for Geneid, and 36 sample coloums with numeric values. there are 32 340 different genes identified in the RNAseq pipeline. 
+
+## Assign groups
+```{r assign group}
+# list individuals in each group, and sort df thereafter:
+
+group_info <- read_delim("Pre_proccessed_data/Exp1_plasma_labels_for_Metabolomics__20210430.txt")
+
+group_info <- group_info[,1:7]
+
+df <- df %>% 
+  dplyr::select(-S37,-S46, -S49) %>% 
+  dplyr::rename(SF=Sf) %>% 
+  relocate(Geneid,S5,S12,S21,S40,S62,S11,S14,S18,S22,S31,S56,S10,S30,S36,S45,S47,S26,S28,S29,S35,S41,S59,S4,S7,S16,S38,S50,S8,S27,S55,SD,SE,SF)
+
+Gham_gene_presence <- df$Geneid
+
+# run this if edgeR is not allowing to create DGE object due to NA values, makes a numeric NA to 0. 
+
+df_setNa_to_zero_counts <- df %>%
+  mutate(across(where(is.numeric), ~ ifelse(is.na(.), 0, .)))
+
+df2 <- df_setNa_to_zero_counts %>% 
+  column_to_rownames(var="Geneid")
+
+sample_info <- colnames(df2)
+
+mt <- as.matrix(df2)
+
+
+group <- as.factor(c(rep("Prehib",5),rep("Nonhib",6),rep("IBA",5), rep("Torpid",6), rep("Posthib",5), rep("LP",6)))
+
+  #assign groups
+  #make sure your samples are in order to the appearance of the group
+
+df_DGE <- DGEList(counts = mt, 
+                        genes = Gham_gene_presence, group=group, samples = sample_info)
+
+
+# for looking at all groups referenced to LP (intercept)
+design <-model.matrix(~group)
+
+#for being able to contrast all groups "real" values:
+
+design2 <- model.matrix(~ 0 + group, data = df_DGE$samples)
+
+colnames(design2) <- levels(group)
+
+```
+
+
+
+## Filtering with median cpm >=0.5 
+With the median cpm >=0.5 per gene filter, we retain 16 315 genes and exclude . This is comparable to cpm = 10, as we did in MPP dataset, just that depth of library differ, and hence cpm 0.5 instad of 1. 
+
+```{r filtering step median}
+
+keep_middle <- rowMedians(cpm(df_DGE, log=FALSE, normalized.lib.sizes = TRUE))>=0.5
+
+table(keep_middle) 
+
+
+```
+
+## Apply choosen filtering method
+Choose to use median cpm >= 0.5 for all individuals.
+
+```{r apply-strict-filter}
+df_DGE <- df_DGE[keep_middle, , keep.lib.sizes=FALSE]
+    #update dataset to remove filtered genes
+    #keep.lib.sizes = FALSE is important as this recalculates lib sizes for the kept genes
+
+df_DGE <- calcNormFactors(df_DGE, method = "TMM") 
+    #inbetween sample normalization by adjusting library
+    #this makes the comparison between individuals more comparable :P
+
+df_DGE$samples 
+    #check the normalization factors
+```
+
+
+
+## Explore data quality per sample and on whole dataset PCA
+
+Remove S37, S46 and S49 due to low sequencing depth and low RIN value. 
+
+```{r exploration md per sample,  fig.show='hold', ncol=4, fig.cap="MD plot per sample to inspect individual variation compared to the other samples. number 1-16." }
+n<-1
+for (val in 1: 16)
+  {plotMD(cpm(df_DGE, log = TRUE), column = n)
+   abline(h=0, col='red', lty=2, lwd=2)
+   n <- n+1}
+    #diagonal lines in the lower left corresponds to genes with count of 0,1,2
+    #and so on in the first sample
+
+```
+
+```{r explo-md-per-sample2, fig.show='hold', ncol=4, fig.cap="MD plot per sample to inspect individual variation compared to the other samples. number 17-33."}
+
+n<-1
+for (val in 17: 33)
+  {plotMD(cpm(df_DGE, log = TRUE), column = n)
+   abline(h=0, col='red', lty=2, lwd=2)
+   n <- n+1}
+    #diagonal lines in the lower left corresponds to genes with count of 0,1,2
+    #and so on in the first sample
+colours <- rep(c("blue", "green", "red", "black","orange","yellow"),2)
+
+```
+
+```{r explo-PCA , fig.show='hold', ncol=1, fig.cap=" multidimensional scaling plot (MDS) displaying the pairwise comparison between the sample (PCOA, left). MDS plot looking at the same genes for all comparisons (PCA, right)."}
+
+
+
+colours <- rep(c("royalblue", "forestgreen", "tomato", "deepskyblue","hotpink","gold"),2)
+
+plotMDS(df_DGE, gene.selection = "pairwise",
+  col=colours[group], dim.plot = c(1,2)) 
+  legend("topright", legend = levels(group), col=colours, lty=1, lwd=5, ncol=2)
+
+
+plotMDS(df_DGE, gene.selection = "common",
+  col=colours[group], dim.plot = c(1,2)) 
+  legend("topright", legend = levels(group), col=colours, lty=1, lwd=5, ncol=2)
+    #Produce PCA plot to explore data 
+    # Gene.selection="common" - PCA
+    # Gene.selection="Pariwise" - PCOA
+
+
+
+```
+
+
+
+
+## Estimate dispersion
+Dispersion is to measure the spread of data. When estimating the diversion 
+common, trend and tagwise diversion are produced. Only trend diversion is used 
+in downstream analysis. CV/ BCV are estimates of dispersion. 
+
+CV = coefficient of variation = how much spread relative to mean 
+BCV= Biological CV=  how much the abundance (unknown) of the gene varies 
+                      between replicates, 
+                      relative variability between replicates
+                      
+BCV= 0.1827, means expression values vary up&down 18.27% between replicates
+      <0.1 excellent, 0.1-0.2 good, .2-0.3 acceptable, >0.3% poor
+
+      
+Design matrix records which treatment is assigned to which sample. 
+
+```{r estdisp}
+
+df_DGE <- estimateDisp(df_DGE, design, robust = TRUE)
+
+
+    #estimate dispersion/ of data (Tag=gene), 
+
+sqrt(df_DGE$common.dispersion)
+    #checkpoint
+    #shows the BCV (=square root of dispersion)
+   # good indication for spread within your group
+
+ bcv <- plotBCV(df_DGE)
+    #plot the BCV
+
+png("output/BCV_plot_20240314.png")
+plotBCV(df_DGE)
+dev.off()
+ 
+
+
+```
+
+## Staststical testing
+
+## Fitting model and estimation of QL dispersion - 0 as intercept
+
+EdgeR recommends to fit a generalized linear model to the data if more than one
+factor design (e.g. light-treatment and time in each light treatment)
+
+```{r fit model}
+#QL dispersion
+
+fit <- glmQLFit(df_DGE, design2, robust = TRUE) 
+    #this fits the model. Basically it is one model per gene
+    
+head(fit$coefficients) 
+    #look at coefficients of the genes, the coefficients would be the slope for
+    #the GLM 
+
+plotQLDisp(fit)
+    #plots the genewise quasi-likelihood dispersion against the gene abundance   
+
+
+png("output/QLdisp_plot_20240314.png")
+plotQLDisp(fit)
+dev.off()
+
+
+```
+
+## Contrast all vs LP - LP as intercept
+To identify which genes that in any of the groups, regardless of time in Short photoperiod and 8 degrees and physiological state, are different to the transcriptomic profile of tanycytes during long photoperiod and 22 degrees.
+
+Need to define LP as the intercept of the design matrix e.g. group1. Then use design and fit function
+
+5005 genes are differentially expressed (fdr<0.05) between any of the groups compared to LP, while 11310 are not. 
+
+```{r all vs LP}
+
+#Ensure LP is group 1 in design, default is alphabetical e.g. IBA
+
+# Order of groups are: group1- LP2, group2 - Prehib, group3- Nonhib, group4-IBA, group5-Torpid, group6- Posthib. 
+
+group_LP_first <- as.factor(c(rep("Group2",5),rep("Group3",6),rep("Group4",5), rep("Group5",6), rep("Group6",5), rep("Group1",6)))
+
+design_LP_first <- model.matrix(~group_LP_first)
+
+
+#QL dispersion
+
+fit2 <- glmQLFit(df_DGE, design = design_LP_first, robust=TRUE)
+
+head(fit2$coefficients) 
+    #look at coefficients of the genes, the coefficients would be the slope for
+    #the GLM 
+
+plotQLDisp(fit2)
+    #plots the genewise quasi-likelihood dispersion against the gene abundance
+# After glmQLFit, can perform glmWLFTest to run the quasi-likelihood (QL) F-test
+#Try to run for whole dataset, ie all contrasts, this will indicate which genes that differ most in all groups contrasted with LP or all?. 
+
+#test all groups vs LP, since I now have made ~group to the design matrix I have made an intercept, this means that I can specify coef=2:6, this will compare Prehib, Nonhib, IBA, Torpid, Posthib to the LP baseline
+
+qlf_all_vsLP <- glmQLFTest(fit2, coef = 2:6)
+
+summary(decideTests(qlf_all_vsLP, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_qlf_all_vsLP <-topTags(qlf_all_vsLP, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_all_vsLP <-Toptabs_qlf_all_vsLP$table
+
+tb_qlf_all_vsLP_anno <- tb_qlf_all_vsLP %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+   left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+  
+Toptabs_qlf_all_vsLP_05 <- topTags(qlf_all_vsLP, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = 0.05)
+
+tb_qlf_DEG_all_vs_all_05 <- Toptabs_qlf_all_vsLP_05$table
+
+DEG_all_vs_all <- tb_qlf_DEG_all_vs_all_05%>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+   left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_all_vsLP_anno, file="output/glm_test_All_vs_LP_mediancpm05.txt")
+
+```
+
+## Contrast all euthermic vs LP
+2291 genes are different between all euthermic groups and LP, "loose" ~3000 genes that are driven by differences in Torpor. 
+
+```{r all euthermic vs LP}
+
+qlf_all_euth_vsLP <- glmQLFTest(fit2, coef = c(2:4,6))
+
+summary(decideTests(qlf_all_euth_vsLP, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_qlf_all_euth_vsLP <-topTags(qlf_all_euth_vsLP, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_all_euth_vsLP <-Toptabs_qlf_all_euth_vsLP$table
+
+tb_qlf_all_euth_vsLP_anno <- tb_qlf_all_euth_vsLP%>% 
+  rownames_to_column(var="ncbi_symbol") %>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_all_euth_vsLP_anno, file="output/glm_test_All_euthermic_vs_LP_mediancpm05.txt")
+
+
+```
+
+Compare the result if run pairwise contrast, 2291 genes are different with this approach to. So the specified all contrasts, and by numbers yield the same result. Reassuring. 
+
+
+```{r all euthermic groups pairwise}
+
+# To perform these contrasts, have inserted an intercept as 0. in design and fit object. 
+contrast_euth <- makeContrasts(
+  LPvsPrehib = LP - Prehib,
+  LPvsNonhib = LP - Nonhib,
+  LPvsIBA = LP - IBA,
+  LPvsPosthib = LP - Posthib,
+  PrehibvsIBA = Prehib - IBA,
+  PrehibvsNonhib = Prehib - Nonhib,
+  Prehibvsposthib = Prehib - Posthib,
+  NonhibvsIBA = Nonhib - IBA,
+  NonhibvsPosthib = Nonhib - Posthib,
+  IBAvsPosthib = IBA - Posthib, levels=design2)
+
+fit2 <- glmQLFit(df_DGE, design = design2, robust=TRUE)
+
+Pairwise_contrasts_euth <- glmQLFTest(fit2, contrast = contrast_euth)
+
+Toptabs_Pairwise_contrasts_euth <-topTags(Pairwise_contrasts_euth, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+summary(decideTestsDGE(Pairwise_contrasts_euth, adjust.method = "fdr", p.value = 0.05))
+
+tb_qlf_pairwise_cont_euth <-Toptabs_Pairwise_contrasts_euth$table
+
+tb_qlf_pairwise_cont_euth_anno <- tb_qlf_pairwise_cont_euth %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_pairwise_cont_euth_anno, file="output/glm_ANOVA_like_test_euthermic_mediancpm05.txt")
+
+
+
+```
+
+### Contrast All euthermic SP adapted groups vs cold Torpid group
+To identify which genes that are essential in the expression of torpor compared to groups that are capable of or soon could enter torpor. 
+
+2463 DEG of 16 315. 
+```{r SPadapted warm vs SPadapted cold}
+
+# To perform these contrasts, have inserted an intercept as 0. in design and fit object. 
+contrast_SP <- makeContrasts(
+  PrehibvsTorp = Prehib - Torpid,
+  PrehibvsIBA = Prehib - IBA,
+  PrehibvsNonhib = Prehib - Nonhib,
+  IBAvsNonhib = IBA -Nonhib ,
+  IBAvsTorp = IBA - Torpid,
+  NonhibvsTorp = Nonhib - Torpid, levels=design2)
+
+fit2 <- glmQLFit(df_DGE, design = design2, robust=TRUE)
+
+Pairwise_contrasts_SP <- glmQLFTest(fit2, contrast = contrast_SP)
+
+Toptabs_Pairwise_contrasts_SP <-topTags(Pairwise_contrasts_SP, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+summary(decideTestsDGE(Pairwise_contrasts_SP, adjust.method = "fdr", p.value = 0.05))
+
+tb_qlf_pairwise_cont_SP <-Toptabs_Pairwise_contrasts_SP$table
+
+tb_qlf_pairwise_cont_SP_anno <- tb_qlf_pairwise_cont_SP %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_pairwise_cont_SP_anno, file="output/glm_test_Pairwise_contrasts_SPadapt_mediancpm05.txt")
+
+
+tb_qlf_SPadapted_DEG <- tb_qlf_pairwise_cont_SP %>% 
+  filter(FDR<=0.05)
+
+```
+
+
+#### Pairwise contrasts
+
+```{r pairwise contrats SPadapted vs torpid to make upsetplot}
+
+## Nonhib vs torpid
+
+nonhibvstorp_con <- makeContrasts(NonhibvsTorpid = Nonhib - Torpid, levels = design2)
+
+Nonhib_vs_torp <- glmQLFTest(fit2, contrast = nonhibvstorp_con)
+
+summary(decideTestsDGE(Nonhib_vs_torp, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_Nonhib_vs_torp <- topTags(Nonhib_vs_torp, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_Nonhib_vs_torp <- Toptabs_Nonhib_vs_torp$table
+
+tb_qlf_Nonhib_vs_torp_anno <- tb_qlf_Nonhib_vs_torp%>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_Nonhib_vs_torp_anno , file="output/glm_test_tb_qlf_Nonhib_vs_torp_anno_mediancpm05.txt")
+
+
+## Prehib vs Torpid
+
+Prehibvstorp_con <- makeContrasts(PrehibvsTorpid = Prehib - Torpid, levels = design2)
+
+Prehib_vs_torp <- glmQLFTest(fit2, contrast = Prehibvstorp_con)
+
+summary(decideTestsDGE(Prehib_vs_torp, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_Prehib_vs_torp <- topTags(Prehib_vs_torp, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_Prehib_vs_torp <- Toptabs_Prehib_vs_torp$table
+
+tb_qlf_Prehib_vs_torp_anno <- tb_qlf_Prehib_vs_torp%>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_Prehib_vs_torp_anno , file="output/glm_test_tb_qlf_Prehib_vs_torp_anno_mediancpm05.txt")
+
+
+## IBA vs Torpid
+
+IBAvstorp_con <- makeContrasts(IBAvsTorpid = IBA - Torpid, levels = design2)
+
+IBA_vs_torp <- glmQLFTest(fit2, contrast = IBAvstorp_con)
+
+summary(decideTestsDGE(IBA_vs_torp, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_IBA_vs_torp <- topTags(IBA_vs_torp, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_IBA_vs_torp <- Toptabs_IBA_vs_torp$table
+
+tb_qlf_IBA_vs_torp_anno <- tb_qlf_IBA_vs_torp%>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_IBA_vs_torp_anno , file="output/glm_test_tb_qlf_IBA_vs_torp_anno_mediancpm05.txt")
+
+
+
+
+```
+
+
+
+
+## Pairwise contrasts with one overall statistic
+To identify which genes that in any of the groups, regardless of time in Short photoperiod and 8 degrees and physiological state, are different to the transcriptomic profile of tanycytes during long photoperiod and 22 degrees.
+
+Need to make sure the contrast works correctly. 
+
+```{r Pariwise contrasts }
+
+# To perform these contrasts, have inserted an intercept as 0. in design and fit object. 
+contrast <- makeContrasts(
+  PrehibvsLP = Prehib - LP,
+  PrehibvsIBA = Prehib - IBA,
+  IBAvsNonhib = IBA -Nonhib ,
+  PrehibvsNonhib = Prehib - Nonhib,
+  IBAvsTorp = IBA - Torpid,
+  IBAvsPosthib = IBA - Posthib,
+  PosthibvsLP = Posthib - LP, levels=design2)
+
+fit2 <- glmQLFit(df_DGE, design = design2, robust=TRUE)
+
+Pairwise_contrasts <- glmQLFTest(fit2, contrast = contrast)
+
+Toptabs_Pairwise_contrasts <-topTags(Pairwise_contrasts, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+summary(decideTestsDGE(Pairwise_contrasts, adjust.method = "fdr", p.value = 0.05))
+
+tb_qlf_pairwise_cont <-Toptabs_Pairwise_contrasts$table
+
+tb_qlf_pairwise_cont_anno <- tb_qlf_pairwise_cont %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+   left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_pairwise_cont_anno, file="output/glm_test_Pairwise_contrasts_mediancpm05.txt")
+
+
+```
+
+
+
+## Pairwise contrasts with one statstic per contrast
+Compute pairwise contrasts per predefined relevant contrast and use these FDR-values and logFC in the volcano plots
+
+Add on proper annotation: ncbi, mgi, description ++. 
+
+```{r pairwise-contrasts-onebyone}
+
+#
+contrast <- makeContrasts(
+  PrehibvsLP = Prehib - LP,
+  PrehibvsIBA = Prehib - IBA,
+  IBAvsNonhib = IBA -Nonhib ,
+  PrehibvsNonhib = Prehib - Nonhib,
+  IBAvsTorp = IBA - Torpid,
+  IBAvsPosthib = IBA - Posthib,
+  PosthibvsLP = Posthib - LP, levels=design2)
+
+#specify by name to ensure correct:
+
+## Prehib vs LP:
+
+prehibvslp_con <- makeContrasts(PrehibvsLP = Prehib - LP, levels = design2)
+
+
+
+
+prehibvslp <- glmQLFTest(fit2, contrast = prehibvslp_con)
+
+Toptabs_prehibvslp <-topTags(prehibvslp, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+summary(decideTestsDGE(prehibvslp, adjust.method = "fdr", p.value = 0.05))
+
+tb_qlf_prehibvslp <-Toptabs_prehibvslp$table
+
+tb_qlf_prehibvslp_anno <- tb_qlf_prehibvslp %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_prehibvslp_anno , file="output/glm_test_tb_qlf_prehibvslp_anno_mediancpm05.txt")
+
+## Prehib vs Nonhib:
+
+prehibvsnon_con <- makeContrasts(prehibvsnon = Prehib - Nonhib, levels = design2)
+
+prehibvsnon <- glmQLFTest(fit2, contrast = prehibvsnon_con)
+
+summary(decideTestsDGE(prehibvsnon, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_prehibvsnon<-topTags(prehibvsnon, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_prehibvsnon <-Toptabs_prehibvsnon$table
+
+tb_qlf_prehibvsnon_anno <- tb_qlf_prehibvsnon %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_prehibvsnon_anno , file="output/glm_test_tb_qlf_prehibvsnon_anno_mediancpm05.txt")
+
+
+## Prehib vs IBA:
+
+prehibvsiba_con <- makeContrasts(prehibvsiba = Prehib - IBA, levels = design2)
+
+prehibvsiba <- glmQLFTest(fit2, contrast = prehibvsiba_con)
+
+summary(decideTestsDGE(prehibvsiba, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_prehibvsiba<-topTags(prehibvsiba, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_prehibvsiba <-Toptabs_prehibvsiba$table
+
+tb_qlf_prehibvsiba_anno <- tb_qlf_prehibvsiba %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_prehibvsiba_anno , file="output/glm_test_tb_qlf_prehibvsiba_anno_mediancpm05.txt")
+
+## Nonhib vs IBA
+
+nonhibvsiba_con <- makeContrasts(nonhibvsiba = Nonhib - IBA, levels = design2)
+
+nonhibvsiba <- glmQLFTest(fit2, contrast = nonhibvsiba_con)
+
+summary(decideTestsDGE(nonhibvsiba, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_nonhibvsiba <- topTags(nonhibvsiba, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_nonhibvsiba <- Toptabs_nonhibvsiba$table
+
+tb_qlf_nonhibvsiba_anno <- tb_qlf_nonhibvsiba %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_nonhibvsiba_anno , file="output/glm_test_tb_qlf_nonhibvsiba_anno_mediancpm05.txt")
+
+
+
+## Torpid vs IBA
+
+torpvsiba_con <- makeContrasts(torpvsiba = Torpid - IBA, levels = design2)
+
+torpvsiba <- glmQLFTest(fit2, contrast = torpvsiba_con)
+
+summary(decideTestsDGE(torpvsiba, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_torpvsiba <- topTags(torpvsiba, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_torpvsiba <- Toptabs_torpvsiba$table
+
+tb_qlf_torpvsiba_anno <- tb_qlf_torpvsiba %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_torpvsiba_anno , file="output/glm_test_tb_qlf_torpvsiba_anno_mediancpm05.txt")
+
+## IBA vs Posthib
+
+ibavsposthib_con <- makeContrasts(ibavsposthib = IBA - Posthib, levels = design2)
+
+ibavsposthib <- glmQLFTest(fit2, contrast = ibavsposthib_con)
+
+summary(decideTestsDGE(ibavsposthib, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_ibavsposthib <- topTags(ibavsposthib, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_ibavsposthib<- Toptabs_ibavsposthib$table
+
+tb_qlf_ibavsposthib_anno <- tb_qlf_ibavsposthib %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_ibavsposthib_anno , file="output/glm_test_tb_qlf_iba_vs_posthib_anno_mediancpm05.txt")
+
+
+## Prehib vs Posthib
+
+prehibvsposthib_con <- makeContrasts(prehibvsposthib = Prehib - Posthib, levels = design2)
+
+prehibvsposthib <- glmQLFTest(fit2, contrast = prehibvsposthib_con)
+
+summary(decideTestsDGE(prehibvsposthib, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_prehibvsposthib <- topTags(prehibvsposthib, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_prehibvsposthib<- Toptabs_prehibvsposthib$table
+
+tb_qlf_prehibvsposthib_anno <- tb_qlf_prehibvsposthib %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+write.table(tb_qlf_prehibvsposthib_anno , file="output/glm_test_tb_qlf_prehib_vs_posthib_anno_mediancpm05.txt")
+
+
+## LP vs Posthib
+
+lpvsposthib_con <- makeContrasts(lpvsposthib = LP - Posthib, levels = design2)
+
+lpvsposthib <- glmQLFTest(fit2, contrast = lpvsposthib_con)
+
+summary(decideTestsDGE(lpvsposthib, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_lpvsposthib <- topTags(lpvsposthib, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_lpvsposthib<- Toptabs_lpvsposthib$table
+
+tb_qlf_lpvsposthib_anno <- tb_qlf_lpvsposthib %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+
+
+write.table(tb_qlf_lpvsposthib_anno , file="output/glm_test_tb_qlf_LP_vs_Posthib_anno_mediancpm05.txt", row.names = FALSE)
+
+## LP vs Nonhib
+
+lpvsNonhib_con <- makeContrasts(lpvsNonhib = LP - Nonhib, levels = design2)
+
+lpvsNonhib <- glmQLFTest(fit2, contrast = lpvsNonhib_con)
+
+summary(decideTestsDGE(lpvsNonhib, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_lpvsNonhib <- topTags(lpvsNonhib, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_lpvsNonhib<- Toptabs_lpvsNonhib$table
+
+tb_qlf_lpvsNonhib_anno <- tb_qlf_lpvsNonhib %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+write.table(tb_qlf_lpvsNonhib_anno , file="output/glm_test_tb_qlf_LP_vs_Nonhib_anno_mediancpm05.txt", row.names = FALSE)
+
+
+## LP vs IBA
+
+lpvsIBA_con <- makeContrasts(lpvsIBA = LP - IBA, levels = design2)
+
+lpvsIBA <- glmQLFTest(fit2, contrast = lpvsIBA_con)
+
+summary(decideTestsDGE(lpvsIBA, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_lpvsIBA <- topTags(lpvsIBA, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_lpvsIBA<- Toptabs_lpvsIBA$table
+
+tb_qlf_lpvsIBA_anno <- tb_qlf_lpvsIBA %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+write.table(tb_qlf_lpvsIBA_anno , file="output/glm_test_tb_qlf_LP_vs_IBA_anno_mediancpm05.txt", row.names = FALSE)
+
+## Nonhib vs Posthib
+
+NonhibvsPosthib_con <- makeContrasts(NonhibvsPosthib = Nonhib - Posthib, levels = design2)
+
+NonhibvsPosthib <- glmQLFTest(fit2, contrast = NonhibvsPosthib_con)
+
+summary(decideTestsDGE(NonhibvsPosthib, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_NonhibvsPosthib <- topTags(NonhibvsPosthib, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_NonhibvsPosthib<- Toptabs_NonhibvsPosthib$table
+
+tb_qlf_NonhibvsPosthib_anno <- tb_qlf_NonhibvsPosthib %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+write.table(tb_qlf_NonhibvsPosthib_anno , file="output/glm_test_tb_qlf_Nonhib_vs_Posthib_anno_mediancpm05.txt", row.names = FALSE)
+
+## Prehib vs Torpid
+
+
+
+PrehibvsTorpid_con <- makeContrasts(PrehibvsTorpid = Prehib - Torpid, levels = design2)
+
+PrehibvsTorpid <- glmQLFTest(fit2, contrast = PrehibvsTorpid_con)
+
+summary(decideTestsDGE(PrehibvsTorpid, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_PrehibvsTorpid <- topTags(PrehibvsTorpid, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_PrehibvsTorpid<- Toptabs_PrehibvsTorpid$table
+
+tb_qlf_PrehibvsTorpid_anno <- tb_qlf_PrehibvsTorpid %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+write.table(tb_qlf_PrehibvsTorpid_anno , file="output/glm_test_tb_qlf_Prehib_vs_Torpid_anno_mediancpm05.txt", row.names = FALSE)
+
+
+## Nonhib vs Torpid
+
+
+
+NonhibvsTorpid_con <- makeContrasts(NonhibvsTorpid = Nonhib - Torpid, levels = design2)
+
+NonhibvsTorpid <- glmQLFTest(fit2, contrast = NonhibvsTorpid_con)
+
+summary(decideTestsDGE(NonhibvsTorpid, adjust.method = "fdr", p.value = 0.05))
+
+Toptabs_NonhibvsTorpid <- topTags(NonhibvsTorpid, n=Inf, adjust.method = "fdr", sort.by = "none", p.value = Inf)
+
+tb_qlf_NonhibvsTorpid<- Toptabs_NonhibvsTorpid$table
+
+tb_qlf_NonhibvsTorpid_anno <- tb_qlf_NonhibvsTorpid %>% 
+  rownames_to_column(var="ncbi_symbol")%>% 
+  left_join(df_filt_anno) %>% 
+  relocate(ncbi_symbol, entrez_id, description)
+
+write.table(tb_qlf_NonhibvsTorpid_anno , file="output/glm_test_tb_qlf_Nonhib_vs_Torpid_anno_mediancpm05.txt", row.names = FALSE)
+
+```
+
+
+
+# Add annotation information
+Since feature count is using a ncbi genome I am only supplied with unique ncbi genesymbols. I use the gtf-file to retrieve the entrez_ids to the corresponding ncbi gene symbols. This gives me a species specific unique gene identifier which is readable for biomaRt. I then retreive ensembl_gene_id for our genes to create a solid annotation table that allow cross comparison between species and experiments. Only 10 002 of the 14 927 genes could be assigned an ensembl_gene_id, this is probably due to the old genome used by ensembl compared to the new genome used by NCBI.  
+
+For downstream analysis I will use the ncbi gene symbols for visualization purposes, and entrez_ids for GOterm analysis to benefit from the new genome and keep as much information as possible. 
+
+For comparison with other mouse studies, e.g. Campbell et al. 2017 and Yoo et al. 2021 I need to use the mouse symbols and identifiers. 
+
+### Supply entrez_id from gtf-file. 
+
+```{r annotation gtf file}
+
+
+# See that I have what I need in the gtf-file. Can import, make unique and retain ncbi_symbol and ncbi_gene_id (entrez_id)
+
+
+
+gtf_file <- rtracklayer::import("Feature_count_info/Gtf_and_metadata/GCF_017639785.1_BCM_Maur_2.0_genomic.gtf")
+
+gft_df <- as.data.frame(gtf_file)
+
+
+# select ncbi_symbol and entrez_Id coloumn
+# retain only each gene once, 
+# Rename to explicit column names,
+# remove GeneID: part of entrez_id column:
+
+annotation_df <- gft_df %>% 
+  dplyr::select(gene, db_xref) %>% 
+  distinct(gene, .keep_all = TRUE) %>% 
+  dplyr::rename( ncbi_symbol= gene ,entrez_id = db_xref) %>% 
+  mutate(entrez_id=str_replace(entrez_id, "GeneID:", ""))
+  
+
+anno_desc <- gft_df %>% 
+  dplyr::select(gene, db_xref, product)%>% 
+  dplyr::rename( ncbi_symbol= gene ,entrez_id = db_xref, description = product) %>% 
+  mutate(entrez_id=str_replace(entrez_id, "GeneID:", "")) %>% 
+  distinct(description, .keep_all = TRUE) %>% 
+  distinct(ncbi_symbol, .keep_all = TRUE)
+
+
+anno_desc_df <- annotation_df %>% 
+  left_join(anno_desc)
+
+
+# check if missing any entrez_ids: 
+
+annotation_df %>% 
+  is.na() %>% 
+  summary()
+
+# one row is NA in both symbol and entrez_id
+
+# Map towards retained genes, and see if all is present. 
+
+df_full_anno <- df %>% 
+  select(Geneid) %>% 
+  left_join(annotation_df, by=c("Geneid"="ncbi_symbol"), keep=TRUE)
+
+# see that all features that is classed as mRNA/transcript is not assigned a genesymbol. See how many is affected in filtered df. 
+
+
+
+df_filt_anno <- as_tibble(df_DGE$genes$genes) %>%
+  dplyr::rename( ncbi_symbol= value) %>% 
+  left_join(anno_desc_df,  keep=TRUE) %>% 
+  drop_na(ncbi_symbol.y) %>% 
+  select(-ncbi_symbol.y) %>% 
+  rename(ncbi_symbol = ncbi_symbol.x)
+
+# Drop 11 unassigned genes
+# Have ncbi_symbol and entrez_id for 16304 genes of 16 315 genes. 
+
+# Can try to apply BiomaRt to see how many ENSEMBL_ids that are mapped to these entrez_ids. 
+
+
+```
+
+### Map from entrezid to ensemblid 
+Still golden hamster
+
+See that the genome used is mapped with NCBI, and both symbol and GeneID is given for all the 16 304 genes. THe mapping from NCBI geneID to Ensemble geneID loose 5024 genes, many of them being LOCxxx, but also genes such as Sox21. I will try to improve the mapping between NCBI and ENSEMBL before continuing with the YOO and Campbell analysis. 
+
+
+```{r biomaRt ensemblids}
+
+require(biomaRt)
+
+# To avoid time out issues: 
+options(timeout = 30000)
+
+
+ensembl <- useEnsembl(biomart = "genes")
+  #loading local database  
+
+datasets <- listDatasets(mart = ensembl)
+  #find name of dataset for your organism
+
+
+
+ensembl_Maur <- useMart("ensembl", dataset = "mauratus_gene_ensembl")
+
+attributes <- listAttributes(mart = ensembl_Maur)
+
+# entrezgene_id is the unique gene identifier number from ncbi
+# entrezgene_description is the ncbi decsription of the gene
+
+ncbi_to_ensembl <-   getBM(attributes=c('ensembl_gene_id',"entrezgene_id","mgi_symbol", "mgi_id"),
+                          filters =  "entrezgene_id",
+                          values = list(df_filt_anno$entrez_id),
+                          mart = ensembl_Maur)
+
+# Only 10 002 of the 15 443 genes could be assigned an ensembl_gene_id, this is probably due to the old genome used by ensembl compared to the new genome used by NCBI. 
+
+df_filt_anno$entrez_id <- as.integer(df_filt_anno$entrez_id)
+
+df_filt_anno_ncbi_ensembl <- df_filt_anno %>% 
+  left_join(ncbi_to_ensembl, by=c("entrez_id"="entrezgene_id"), keep=TRUE) %>% 
+  distinct(ncbi_symbol, .keep_all = TRUE)
+
+# merge into one table and save it as an annotation resource for later. 
+
+
+write.table(df_filt_anno_ncbi_ensembl, file="output/Gham_annotation_file_ncbi_ensembl.txt")
+
+
+entrez_id_test <- df_filt_anno_ncbi_ensembl %>% 
+  select(entrez_id) %>% 
+  head(500)
+
+write.table(entrez_id_test, file="Output/entrezid_test_conv.txt")
+
+
+# Check how many retained genes we have by ensembl_gene_id:
+
+df_filt_anno_ncbi_ensembl %>% 
+  drop_na(ensembl_gene_id)
+
+# Only 10 413 of 16 315 genes have been assigned a ensemble_gene_id. Need to see if improve this by using ncbi website? Use NCBI and entrez rather than ensembl
+
+
+
+```
+
+
+### Convert from golden hamster entrezid to mouse symbol and mouse id. 
+Based on previous experience and recommendations ensemblID is the preffered ID to work with. I have already converted both the Yoo et al. 2021 and Campbell et al. 2017 to mouse ensembl ids. So I now need to map golden hamster entrez_ids to mouse ensemblids. As I understand it, the easiest way is to convert from golden hamster ensemblids to mgi_symbol and then from mgi_symbol to mouse ensemblids. These two tables can be merged together, so it is easy to see which is the original full table, and which have the mappings to mouse. Since We already loose ~5000 genes going from Entrez_id (NCBI geneid) to ensembl_gene_id (ENSEMBL geneid) we will loose information in our attempt to compare between golden hamster and mouse. But worth a try. 
+
+Go from 14927 gnes to 9897 from NCBI to ensembl_gene_id to 8967 genes by converting to mouse ensemble gene id. 
+
+
+
+```{r golden hamster to mouse}
+
+# Have ncbi_ensembl dataframe with mgi_symbol.
+# Create a new mart for mouse, and map from mgi_symbol to ensembl_id 
+
+
+require(biomaRt)
+
+#ensembl <- useEnsembl(biomart = "genes")
+  #loading local database  
+
+#datasets <- listDatasets(mart = ensembl)
+  #find name of dataset for your organism
+
+options(timeout = 30000)
+
+ensembl_Mmus <- useMart(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
+
+
+mmus_mgi_to_ensemblid <-   getBM(attributes=c('ensembl_gene_id',"entrezgene_id","mgi_symbol"),
+                          filters =  "mgi_symbol",
+                          values = list(df_filt_anno_ncbi_ensembl$mgi_symbol),
+                          mart = ensembl_Mmus)
+
+# Only 9421 of the 16 315 genes could be assigned an ensembl_gene_id and mgi_symbol this is probably due to the old genome used by ensembl compared to the new genome used by NCBI. 
+
+# left join original dataframe with mouse info: 
+
+df_filt_anno_ncbi_ensembl_mmus <- df_filt_anno_ncbi_ensembl %>% 
+  left_join(mmus_mgi_to_ensemblid, by=c("mgi_symbol"="mgi_symbol"))
+
+# Have now a solid dataframe with mouse info. This is as good as it gets with the old version of the genome on Ensembl, if I find a convertion tool from one organism to another on NCBI it can improve the retained genes. 
+
+# see that I have some duplications.
+
+```
+
+
+```{r mouse symbol to ensemblid bitr}
+
+mmus_ensembl_bitr <- bitr(df_filt_anno_ncbi_ensembl$mgi_symbol, c("SYMBOL"), c("SYMBOL", 'ENSEMBL', 'ENTREZID' ), 'org.Mm.eg.db')
+
+
+mmus_bitr_ncbi_anno <- bitr(df_filt_anno$ncbi_symbol, c("SYMBOL"), c("SYMBOL", 'ENSEMBL', 'ENTREZID', "GENENAME"), 'org.Mm.eg.db')
+
+# Stick to BiomaRt approach. 
+
+# add on genename column to df_filt_anno, and clean up column name
+
+df_filt_anno_mmus_bitr <- df_filt_anno %>% 
+  left_join(mmus_bitr_ncbi_anno, by=c("ncbi_symbol"="SYMBOL")) %>% 
+  rename( "Maur_entrezid"="entrez_id", "Mmus_entrezid"="ENTREZID") %>% 
+  distinct(ncbi_symbol, .keep_all = TRUE)
+
+df_filt_anno_mmus_bitr %>% 
+  drop_na(Mmus_entrezid)
+
+# with this approach, retain 12 402 Ensembl_mouse info. 
+
+```
+
+See how the mapping is performing if I input the golden hamster ncbi list of symbols to the mouse mart and filter as if they were external_gene_names. THis improves the mapping to mouse, and retains 11 866 genes. I merge this table with the golden hamster one, and use it for subsequent comparison analysis to mouse. 
+
+```{r ncbi symbol to mouse symbol}
+
+
+mmus_ext_gene_name_to_ensemblid <-   getBM(attributes=c('ensembl_gene_id',"entrezgene_id","mgi_symbol","external_gene_name"),
+                          filters =  "external_gene_name",
+                          values = list(df_filt_anno_ncbi_ensembl$ncbi_symbol.x),
+                          mart = ensembl_Mmus)
+
+
+df_filt_anno_ncbi_ext_gene_name_mmus <- df_filt_anno_ncbi_ensembl %>% 
+  left_join(mmus_ext_gene_name_to_ensemblid, by=c("mgi_symbol"="mgi_symbol"))
+
+write_delim(df_filt_anno_ncbi_ext_gene_name_mmus, file= "Output/df_ncbi_ext_gene_name_mmus_biomaRt.txt")
+
+
+```
+
+
+
+
+
+
+
+
+# Figure 1G - PCA analysis 
+## PCA - All euthermic groups - All individuals - DEG - 2291
+
+```{r PCA DEG euthermic}
+
+
+# Matrix (mt_1) used earlier is already median cpm >=0.5 and logCPM >0 DEGered use this for PCA
+# remove Torpid columns, n=6. 
+
+mt_cpm_DEG_euth <- tb_cpm %>% 
+  select(-c("S59", "S28", "S35", "S29", "S41", "S26")) %>% 
+  relocate(1,23:28) %>% 
+  filter(ncbi_symbol %in% LPvsall_euth_DEG_fdr_0.05$ncbi_symbol) %>% 
+  column_to_rownames(var="ncbi_symbol") %>% 
+  as.matrix()
+
+metadata_euth  <-data.frame(row.names = colnames(mt_cpm_DEG_euth))
+
+group_whole_euth  <- as.factor(c(rep("LP",6),rep("Prehib",5),rep("Nonhib",6),rep("IBA",5), rep("Posthib",5)))
+
+metadata_euth$group <- group_whole_euth
+
+metadata_euth$group<- factor(metadata_euth$group, levels = c("LP","Prehib","Nonhib","IBA","Posthib"))
+
+PCA_mt_DEG_euth  <-PCAtools::pca(mt_cpm_DEG_euth , metadata=metadata_euth , removeVar = 0.1)
+
+which(cumsum(PCA_mt_DEG_euth $variance) > 80)[1]
+
+screeplot_DEG_euth <- PCAtools::screeplot(PCA_mt_DEG_euth )
+
+## Explorative plot:
+
+biplot_pca_DEG_euth  <-PCAtools::biplot(PCA_mt_DEG_euth ,
+                             colby = "group",
+                             colkey = c("Prehib"="#377EB8",
+                         "LP" ="#FFFF33",
+                         "IBA"="#984EA3",
+                         "Nonhib"="#4DAF4A",
+                         "Posthib"= "#FF7F00"),
+                             pointSize = 3,
+                             legendPosition = "right",
+                             showLoadings = FALSE,
+                             lab = rownames(PCA_mt_DEG_euth$metadata),
+                             caption = '2 PCs ≈ 80%',
+                             ylim = c(-3000,3000),
+                             xlim=c(-5000,5000))
+biplot_pca_DEG_euth
+
+
+ggsave("output/Screeplot_on_cpm_DEG_euthermic_data_20240409.pdf", 
+       plot=screeplot_DEG_euth,
+       dpi=300)
+
+
+ggsave("output/biplot_pca_on_cpm_DEG_euth_data_matched_color_V2_20240409.pdf", 
+       plot=biplot_pca_DEG_euth,
+       dpi=300, height = 5, width = 7)
+```
+
+
+
+# Figure 2A
+
+## Heatmap DEG all euthermic groups - rerun to check stability
+
+
+
+```{r rerun heatmap 20 iterations}
+
+##Make heatmap
+heat_V2 <- Heatmap(t(mt_all_euth_rowscaled),
+                show_row_names=FALSE,
+                km= 5,
+                row_km_repeats = 20,
+                cluster_columns = FALSE,
+                clustering_distance_rows ="euclidean",
+                clustering_method_rows= "ward.D",
+                column_dend_height = unit(2, "cm"), 
+                row_dend_width = unit(2, "cm"),
+                col = col_fun,
+                top_annotation = ha,
+                heatmap_legend_param = list(
+                  title = "Z-score",
+                  legend_height = unit(3, "cm"),
+                  title_position = "leftcenter-rot"
+                  
+                ))
+
+##Draw heatmap
+ht_V2 <- draw(heat_V2)
+
+
+ pdf(file="output/heatmap_DEGs_all_euthermic_contrasts_fdr0.05_cpm_ind_km_5_240409_Rerunned.pdf", width = 14, height=21)
+ ht_V2
+ dev.off()
+
+
+  pdf(file="output/heatmap_DEGs_all_euthermic_contrasts_fdr0.05_cpm_ind_km_5_240409_Rerunned_ed.pdf")
+ ht_V2
+ dev.off()
+ 
+ ht_V2
+ 
+
+```
+
+Continue to inspect the different clusters created, and run GOterm analysis on these. 
+
+```{r heatmap clusters}
+
+
+r.dend_v2 <- row_dend(ht_V2)
+
+rcl.list_v2 <- row_order(ht_V2)
+
+str(rcl.list_v2)
+
+
+# 251 genes in cluster 1
+# 457 genes in cluster 2
+# 403 genes in cluster 3
+# 657 genes in cluster 4
+# 523 genes in cluster 5
+
+
+# map this new rowordering to the original matrix which contain the genename as rowname, answer from Chat.UiT
+
+
+# Assuming 'mt_all_euth_rowscaled' is your original matrix/data frame with genes as row names
+gene_names <- rownames(t(mt_all_euth_rowscaled))
+
+# Initialize a list to store gene names for each cluster
+clusters_v2 <- list()
+
+# Loop through each cluster in rcl.list and get the gene names
+for (i in seq_along(rcl.list_v2)) {
+  cluster_indices <- rcl.list_v2[[i]]
+  clusters_v2[[i]] <- gene_names[cluster_indices]
+}
+
+# Name the list elements for convenience
+names(clusters_v2) <- paste0("Cluster", seq_along(clusters_v2))
+
+# Now 'clusters' is a list of gene names, where each element of the list corresponds to a cluster
+
+```
+Rerunned 20 iterations.
+Have now assigned the genenames to the clusters on the heatmap. Can extract per cluster to make a list 
+
+```{r heatmap clusters }
+
+
+# You can access the genes for each cluster by indexing the list
+
+genes_in_cluster_v2_1 <-  clusters_v2[["Cluster1"]]
+genes_in_cluster_v2_2 <- clusters_v2[["Cluster2"]]
+genes_in_cluster_v2_3 <- clusters_v2[["Cluster3"]]
+genes_in_cluster_v2_4 <- clusters_v2[["Cluster4"]]
+genes_in_cluster_v2_5 <- clusters_v2[["Cluster5"]]
+
+
+
+
+```
+
+Works, have now a list of ncbi symbol per km cluster. Run GOterm analysis on these lists. 
+
+## Index plot
+
+```{r index plot}
+genes_of_interest <- c("Pygm","Slc37a4","Adpgk","Slc2a5","Dio3","LOC101840180", "Gad1","Gad2","Rab3a","Tubb4b","Cfap47", "Cfap20", "Dio2", "LOC101822890")
+
+norm_cpm_DEG_euth_df_v2 <- df_all_euth_DEG_all_ind_long %>%
+  rename("ncbi_symbol"="Gene") %>% 
+  group_by(ncbi_symbol) %>% 
+  mutate(cpm = as.numeric(cpm)) %>% 
+  mutate(norm_cpm = (cpm - min(cpm)) / (max(cpm) - min(cpm))) %>%
+  ungroup() %>% 
+  right_join(k5_cluster_v2_assignment)
+  
+## calculate mean and CI:
+
+
+cluster_v2_summary2 <- norm_cpm_DEG_euth_df_v2 %>% 
+  group_by(cluster, group) %>%
+  summarize(
+    mean = mean(norm_cpm),
+    lower_ci = mean - qt(0.975, df=n()-1) * sd(norm_cpm) / sqrt(n()),
+    upper_ci = mean + qt(0.975, df=n()-1) * sd(norm_cpm) / sqrt(n()),
+    lw_SD = mean - sd(norm_cpm),
+    Upper_SD = mean + sd(norm_cpm),
+    lw_SEM = mean - (sd(norm_cpm)/sqrt(n())),
+    Upper_SEM = mean +(sd(norm_cpm)/sqrt(n()))
+  ) %>%
+  ungroup()
+
+
+norm_cpm_genes_v2 <- norm_cpm_DEG_euth_df_v2 %>% 
+  filter(ncbi_symbol %in% genes_of_interest) %>% 
+  group_by(ncbi_symbol, cluster, group) %>%
+  summarize(
+    mean = mean(norm_cpm),
+    lw_SD = mean - sd(norm_cpm),
+    Upper_SD = mean + sd(norm_cpm),
+    lw_SEM = mean - (sd(norm_cpm)/sqrt(n())),
+    Upper_SEM = mean +(sd(norm_cpm)/sqrt(n()))
+    )%>% 
+  ungroup()
+
+```
+
+
+```{r mod code line and dot}
+
+#cluster 1 = pygm, g6pt (Slc37a4), adpgk
+#cluster 2 = slc2a5, dio3, pfpk (LOC101840180),
+#cluster 3= Gad1, Gad2, Rab3a
+#cluster 4 = tubb4b, cfap47, cfap20
+#cluster 5 = dio2, aldh1a1(LOC101822890), vimentin (Cl1?)
+
+gene_colors <- c("Adpgk"="deepskyblue", 
+                "Pygm"  ="royalblue", 
+                "Slc37a4"  = "deepskyblue4",
+                "Slc2a5" = "lightsteelblue",
+                "Dio3" = "slateblue2", 
+                "LOC101840180" = "slateblue4",
+                "Gad1" =  "deeppink2",
+                "Gad2" = "plum",
+                "Rab3a" =  "lightcoral",
+                "Tubb4b" =  "rosybrown",
+                "Cfap20" = "salmon",
+                "Cfap47" = "peru",
+                "Dio2" =  "gold2",
+                "LOC101822890" = "darkorange")
+
+
+cl1_to_5_point <- ggplot(cluster_v2_summary2, aes(x = group, y = mean, group = cluster)) +
+  geom_line(colour = "black", linewidth = 1, show.legend = FALSE) +
+  geom_ribbon(aes(ymin = lw_SD, ymax = Upper_SD), fill = "gray", alpha = 0.4, show.legend = FALSE) +
+  geom_point(data = norm_cpm_genes_v2, aes(x = group, y =`mean`, color = ncbi_symbol), size=1, show.legend = TRUE) +
+  geom_line(data = norm_cpm_genes_v2, aes(x = group, y = `mean`, group = ncbi_symbol, color = ncbi_symbol), linetype = "dotted", show.legend = FALSE) +
+  #geom_errorbar(data = norm_cpm_genes_v2, aes(x = group, ymin = lw_SD, ymax = Upper_SD, color = ncbi_symbol), width = 0.2, show.legend = FALSE) +
+  labs(x = "Group", y = "Normalized CPM") +
+  coord_cartesian(ylim = c(0, 1)) +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~cluster, scales = "free_y", nrow = 5) +
+  scale_color_manual(values = gene_colors)  # Customize colors for each gene
+
+print(cl1_to_5_point)
+
+ggsave("output/Gene_exp_index_plot_with_genes_point_20241014.pdf", plot = cl1_to_5_point, dpi = 300, width = 3, height = 6)
+
+write.csv(cluster_v2_summary2, file="output/k5_cluster_summary_20241014.csv")
+
+write.csv(norm_cpm_genes_v2, file="output/k5_cluster_gene_highlights_20241014.csv")
+
+write.csv(norm_cpm_DEG_euth_df_v2, file="output/norm_cpm_DEG_euth_df.csv")
+
+```
+
+
+# Figure 2B 
+
+Done through the ShinyGO interface. 
+
+# Figure 2C
+
+Enrichment analysis. 
+
+```{r enrichGO }
+cl4 <- read.delim("cluster4-gham.csv", sep = "\t", check.names=FALSE)
+cl4 <- cl4[,1]
+bkg <- read.csv("background-gham.csv", sep = "\t", check.names=FALSE)
+bkg <- bkg[,1]
+
+cl4_enrich <- clusterProfiler::enrichGO(cl4,"org.Mm.eg.db", 
+                                        ont = c("CC"), 
+                                        keyType = "ENTREZID",
+                                        pvalueCutoff = 0.05, 
+                                        pAdjustMethod= "fdr",
+                                        universe = as.character(bkg),
+                                        maxGSSize = 700, 
+                                        minGSSize = 10, 
+                                        pool =FALSE,
+                                        readable = TRUE)
+
+head(cl4_enrich)
+
+
+
+clpr_trans_spes <- clusterProfiler::enrichGO(Transition_spesific_geneid, 
+                                             "org.Mm.eg.db", 
+                                             ont = c("ALL"), 
+                                             keyType = "ENSEMBL",
+                                             pvalueCutoff = 0.05,
+                                             pAdjustMethod= "fdr",
+                                             universe= universe_background_geneid ,
+                                             minGSSize = 10,
+                                             maxGSSize = 700,
+                                             pool = FALSE,
+                                             readable = TRUE)
+
+
+view(clpr_trans_spes)
+
+write.table(clpr_trans_spes, file="output/GOterm_transition_specific_GS10_700_nosimpl_260822.txt")
+
+```
+
+
+# Figure 3A
+
+BT profile Euthermic and torpid states. 
+
+```{r zoomed in snippet of BTprofile}
+
+BT_S10_zoom <- Data %>% 
+  filter(ID=="S10") %>% 
+  ggplot( aes(DatePOSIX, BT))+
+  geom_point(size=0.9 ,colour= "#464747", alpha= 0.9)+
+  theme_classic()+
+  xlab("Time") +
+  ylab("Core body temperature (degrees)")+
+  scale_x_datetime(limits = as.POSIXct(c("2020-03-03","2020-03-15")), date_breaks = "4 day", date_minor_breaks = "2 day")+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+BT_S10_zoom
+
+
+```
+
+# Figure 3B
+
+```{r Volcano-torpid-ibe }
+
+# torpid vs IBA/IBE
+
+keyvals.color5 <- ifelse(
+  tb_qlf_torpvsiba_anno$logFC < 0 & tb_qlf_torpvsiba_anno$FDR < 0.05 , 'tomato3',
+  ifelse(tb_qlf_torpvsiba_anno$logFC > 0 & tb_qlf_torpvsiba_anno$FDR < 0.05, 'dodgerblue3',
+         'darkgreen'))
+
+  keyvals.color5[is.na(keyvals.color5)] <- 'darkgreen'
+  names(keyvals.color5)[keyvals.color5 == 'darkgreen'] <- 'FDR > 0.05'
+  names(keyvals.color5)[keyvals.color5 == "dodgerblue3"] <- "Upregulated Torpid"
+  names(keyvals.color5)[keyvals.color5 == "tomato3"] <- "Upregulated IBA"
+
+torpid_IBA_vol <-EnhancedVolcano(tb_qlf_torpvsiba_anno,
+                            lab = tb_qlf_torpvsiba_anno$ncbi_symbol ,
+                            selectLab = c("Dio3", "Dio2", "Sgk2", "Fos", "Junb" ,"Eif5", "LOC121140486", "Dyrk1b", "Ankrd37", "Jun", "Kctd21", "Mlx", "Arrdc3",
+                                          "Akap8l", "Wsb1", "Fbxl3", "Apobec4", "Nr1d1", "Srsf5","LOC101828346","Rsrp1", "Egr1"),
+                            labSize = 3,
+                            x = 'logFC',
+                            y = 'FDR',
+                            xlab = bquote(~Log[2]~ 'fold change'),
+                            ylab= bquote(~-Log[10]~ 'FDR'),
+                            title = 'Torpid vs IBA',
+                            pCutoff = 0.05,
+                            FCcutoff = 0,
+                            pointSize = 2,
+                            colCustom = keyvals.color5,
+                            colAlpha = 0.9,
+                            legendPosition = 'top',
+                            legendLabSize = 15,
+                            legendIconSize = 5.0,
+                            drawConnectors = TRUE,
+                            widthConnectors = 0.75,
+                            colConnectors = 'black',
+                            arrowheads = FALSE,
+                            maxoverlapsConnectors = Inf,
+                            gridlines.major = TRUE,
+                            gridlines.minor = FALSE,
+                            border = 'partial',
+                            borderWidth = 1.5,
+                            borderColour = 'black',
+                            caption = bquote(~Log[2]~ "fold change cutoff, 0; FDR cutoff, 0.05; total = 14 927 variables"),
+                            captionLabSize = 10,
+                            xlim = c(-5,5),
+                            ylim =c(0,15))
+
+torpid_IBA_vol
+
+ggsave("output/Volcano_TorpidvsIBA_20240314.png", plot= torpid_IBA_vol, dpi=300, height = 10, width=7)
+
+
+ggsave("output/Volcano_TorpidvsIBA_20240314.pdf", plot= torpid_IBA_vol, dpi=300)
+
+```
+
+# 3C
+plotted in GraphPad prism. 
+
+# 3D
+Done through the ShinyGO interface. 
+
+# 3E
+Done through the ShinyGO interface. 
+
+# Supplemental figure 1A
+## Use cellular cluster markers from Campbell et al. 2017
+Use Campbell et al. 2017 supplementary table 2.
+There are 20 clusters named from a01 to a20. 
+For each cluster there is a fold change for each pair-wise contrast between the respective cluster and every other. 
+
+* The #Positive column denotes how many contrasts that have an FDR below a certain threshold (25%?). The higher the number, the more specific the cluster.
+
+* The #Average column denotes average fold change between all other clusters for each gene. The higher the fold change, the more specific to the cluster.
+
+
+What exactly is the geneID used by Campbell originally, could it be that they used NCBI-symbols, and I can use their original straigh off with a better mapping? NCBIsymbol mouse and NCBI symbol Mauratus might be consistent?
+
+
+
+```{r load sup table 2, warning=FALSE}
+
+
+#load each file for each cluster, name by cluster number and cell type 
+
+camp_sup2 <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 1)
+
+a01_oligoden3 <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 1) 
+
+a02_oligoden2 <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 2)
+
+a03_endothel <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 3)
+
+a04_Mural <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 4)
+
+a05_oligoden1 <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 5)
+
+a06_NG2_OPC <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 6)
+
+a07_PVM_micro <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 7)
+
+a08_VLMCs <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 8)
+
+a09_Ependymo <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 9)
+
+a10_Astro <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 10)
+
+a11_Tany1 <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 11)
+a11_Tany1_full <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 11)
+
+
+a12_Tany2 <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 12)
+
+a12_Tany2_full <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 12)
+
+a13_Neurons1 <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 13)
+
+a14_Neurons2 <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 14)
+
+a15_Neurons3 <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 15)
+
+a16_Neurons4 <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 16)
+
+a17_Neurons5 <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 17)
+
+a18_Neurons6 <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 18)
+
+a19_PT1 <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 19)
+
+a20_PT2 <- read_excel("External_data/Campbell_sup2_dowload_20220603_2017_BFnn4495_MOESM68_ESM.xlsx", sheet = 20)
+
+
+# endothel cluster some genesymbols_given as date... Go back and fix. 
+# is like this in suptable straight from journal, looks good to me when inspect, must be just similar genenames and R thinks its a date. 
+
+# assign and use GeneID instead later on. 
+
+
+
+```
+
+
+#### Assign unique geneIDs to the Campbell dataset to use for downstream analysis
+
+Map unidentified symbols of Campbell to unique ids, n= 12 879. 
+
+```{r assign unique geneIDs to Campbell dataset}
+
+# need to have a dataframe of Symbol, Ensembl ID and MGI symbol for the campbell dataset and then right_join by symbol to retain only the ones we have found Ensembl gene ID for. 
+
+# Campbell_complete_geneid is this datafram with 3 columns and 12 880 observations per column. 
+
+Campbell_complete_geneid <- read_delim("External_data/Campbell_sup_t2_symbol_to_unique_geneID_with_MGI_symbol_complete.txt")
+
+a01_oligoden3 <- a01_oligoden3 %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a01_oligoden3, file="output/a01_oligoden3.txt", row.names = FALSE)
+
+#inspect how that went:
+
+a01_oligoden3 %>% 
+  is.na() %>% 
+   summary
+
+a01_oligoden3 %>% 
+  get_dupes(ensembl_gene_id)
+
+  
+
+# Have the a01 cluster dataframe with gene IDs and run with this downstream to see the workings, then replicate for all after when see it works. 
+
+# Do this for all cluster df, and good to go to subset and visualize. 
+
+a02_oligoden2 <- a02_oligoden2 %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a02_oligoden2, file="output/aO2_oligodend2.txt", row.names = FALSE)
+
+
+a03_endothel <- a03_endothel%>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a03_endothel, file="output/a03_endothel.txt", row.names = FALSE)
+
+a04_Mural <- a04_Mural %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a04_Mural, file="output/a04_Mural.txt", row.names = FALSE)
+
+a05_oligoden1 <- a05_oligoden1 %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a05_oligoden1, file="output/a05_oligoden1.txt", row.names = FALSE)
+
+
+a06_NG2_OPC <- a06_NG2_OPC %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a06_NG2_OPC, file="output/a06_NG2_OPC.txt", row.names = FALSE)
+
+
+a07_PVM_micro <- a07_PVM_micro %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a07_PVM_micro, file="output/a07_PVM_micro.txt", row.names = FALSE)
+
+a08_VLMCs <- a08_VLMCs %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a08_VLMCs, file="output/a08_VLMCs.txt", row.names = FALSE)
+
+a09_Ependymo <- a09_Ependymo %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a09_Ependymo, file="output/a09_Ependymo.txt", row.names = FALSE)
+
+a10_Astro <- a10_Astro %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a10_Astro, file="output/a10_Astro.txt", row.names = FALSE)
+
+a11_Tany1 <- a11_Tany1 %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a11_Tany1, file="output/a11_Tany1.txt", row.names = FALSE)
+
+a11_Tany1_full <- a11_Tany1_full%>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+
+
+a12_Tany2 <- a12_Tany2 %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a12_Tany2, file="output/a12_Tany2.txt", row.names = FALSE)
+
+a12_Tany2_full <- a12_Tany2_full %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+a13_Neurons1 <- a13_Neurons1 %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a13_Neurons1, file="output/a13_Neurons1.txt", row.names = FALSE)
+
+a14_Neurons2 <- a14_Neurons2 %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a14_Neurons2, file="output/a14_Neurons2.txt", row.names = FALSE)
+
+a15_Neurons3 <- a15_Neurons3 %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a15_Neurons3, file="output/a15_Neurons3.txt", row.names = FALSE)
+
+a16_Neurons4 <- a16_Neurons4 %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a16_Neurons4 , file="output/a16_Neurons4.txt", row.names = FALSE)
+
+a17_Neurons5 <- a17_Neurons5 %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a17_Neurons5, file="output/a17_Neurons5.txt", row.names = FALSE)
+
+a18_Neurons6 <- a18_Neurons6 %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a18_Neurons6, file="output/a18_Neurons6.txt", row.names = FALSE)
+
+a19_PT1 <- a19_PT1 %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a19_PT1 , file="output/a19_PT1.txt", row.names = FALSE)
+
+a20_PT2 <- a20_PT2 %>% 
+  right_join(Campbell_complete_geneid, by=c("Gene"="Symbol"), keep=FALSE)
+
+write.table(a20_PT2, file="output/a20_PT2.txt", row.names = FALSE)
+
+
+
+
+```
+
+#### Refine Campbell list with what`s present in the ncbi golden hamster symbol
+By a few test conversions, the NCBI mouse and NCBI golden hamster gene symbols are similar, while the GeneID is unique per species. I`ll try to map directly from NCBI symbol to CAmpbell symbol, without loosing out genes to the conversion issues. 
+
+```{r ncbi to campbell}
+
+# All present golden hamster genes:
+# n= 32 340
+
+Golden_hamster_geneID <- df$Geneid
+
+# Would like to know what`s present in golden hamster dataset compared to CAmpbell regardless of expression levels
+# n= 16 315
+
+Campbell_refined <- Campbell_complete_geneid %>% 
+  filter(mgi_symbol %in% Golden_hamster_geneID)
+# Of the 12 879 genes 10958 are found in the NCBI_symbol golden hamster
+# Much better than previous, keep this 
+# same mapping with cpm median 0.5 and cpm median 1 filtered dataframe. 
+
+
+```
+
+
+#### Refine Campbell list with what is present in the Golden hamster annotation converted to mouse ids
+
+subset Campbell list of unique gene ids with what`s present in the hamster annotation. Of the 12 879 unique gene IDs in the Campbell dataset 7801 are present in Golden hamster after converting to mouse ids. 
+
+```{r Load raw annotation file with geneIDs}
+
+# Do this per cluster
+# filter by treshold average FC >_ 2
+
+a01_oligoden3<-a01_oligoden3 %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+# Reduce the dataframe to 7 816 rows by applying present in golden hamster
+# reduce to 184 by applying average >= 2. 
+
+#repeat for remaining clusters: 
+
+a02_oligoden2 <-a02_oligoden2 %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+  
+
+a03_endothel <- a03_endothel %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+
+a04_Mural <-a04_Mural %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a05_oligoden1 <- a05_oligoden1 %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a06_NG2_OPC <- a06_NG2_OPC %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a07_PVM_micro <- a07_PVM_micro %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a08_VLMCs <- a08_VLMCs %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a09_Ependymo <- a09_Ependymo %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a10_Astro <- a10_Astro %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a11_Tany1 <- a11_Tany1 %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a12_Tany2 <- a12_Tany2 %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a13_Neurons1 <- a13_Neurons1 %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a14_Neurons2 <- a14_Neurons2 %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a15_Neurons3 <- a15_Neurons3 %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a16_Neurons4 <- a16_Neurons4 %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a17_Neurons5 <- a17_Neurons5 %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a18_Neurons6 <- a18_Neurons6 %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a19_PT1 <- a19_PT1 %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+a20_PT2 <- a20_PT2 %>%
+  filter(mgi_symbol %in% Golden_hamster_geneID) %>% 
+  filter(Average >= 2)
+
+```
+
+
+#### Compute cpm for all present genes
+
+Take the refined Campbell list of gene IDs (x) and make total cpm for these and visualize based on clusters. 
+
+Will make cpm plot based on clusters average score and filtered dataset - median cpm >1 (14921 genes). 
+
+
+```{r total cpm for our filtered dataset }
+
+cpm <- cpm(df_DGE, log=FALSE, normalized.lib.sizes = TRUE)
+
+tb_cpm <- as_tibble(cpm, rownames="ncbi_symbol")
+
+total_cpm <- tb_cpm %>% 
+  mutate(total_cpm= rowSums(across(c(2:34)))) %>%
+  right_join(df_filt_anno, by=c("ncbi_symbol"="ncbi_symbol")) %>% 
+  dplyr::select(ncbi_symbol,entrez_id, total_cpm)
+
+
+#total_cpm_unfiltered <- tb_cpm_unfiltered %>% 
+ # mutate(total_cpm= rowSums(across(where(is.numeric)))) %>% 
+  #dplyr::select(ENSEMBLID,total_cpm)
+
+
+# save tb_cpm for outside R resource
+
+write.csv(tb_cpm, file="Output/tb_cpm.csv")
+
+```
+
+
+#### Subset each cluster by Average more or equal to 2. 
+These subset of genes with total cpm is then visualized in one graph for all clusters as a dotplot with 95 percent confidence intervals.  
+
+```{r subset total_cpm by cluster}
+
+
+total_cpm_a01 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a01_oligoden3$Gene)
+
+total_cpm_a01$Cluster <- paste(c("a01_oligoden3"))
+
+total_cpm_a01$Clustervis<- paste(c("Oligoden3"))
+
+# Repeat for all 20
+
+tot_cpm_a02 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a02_oligoden2$Gene)
+
+tot_cpm_a02$Cluster <- paste(c("a02_oligoden2"))
+
+tot_cpm_a02$Clustervis<- paste(c("Oligoden2"))
+
+tot_cpm_a03 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a03_endothel$Gene)
+
+tot_cpm_a03$Cluster <- paste(c("a03_endothel"))
+
+tot_cpm_a03$Clustervis<- paste(c("Endothel"))
+
+tot_cpm_a04 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a04_Mural$Gene)
+
+tot_cpm_a04$Cluster <- paste(c("a04_Mural"))
+
+tot_cpm_a04$Clustervis<- paste(c("Mural"))
+
+tot_cpm_a05 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a05_oligoden1$Gene)
+
+tot_cpm_a05$Cluster <- paste(c("a05_oligoden1"))
+
+tot_cpm_a05$Clustervis<- paste(c("Oligoden1"))
+
+tot_cpm_a06 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a06_NG2_OPC$Gene)
+
+tot_cpm_a06$Cluster <- paste(c("a06_NG2_OPC"))
+
+tot_cpm_a06$Clustervis<- paste(c("NG2_OPC"))
+
+tot_cpm_a07 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a07_PVM_micro$Gene)
+
+tot_cpm_a07$Cluster <- paste(c("a07_PVM_micro"))
+
+tot_cpm_a07$Clustervis<- paste(c("PVM_micro"))
+
+tot_cpm_a08 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a08_VLMCs$Gene)
+
+tot_cpm_a08$Cluster <- paste(c("a08_VLMCs"))
+
+tot_cpm_a08$Clustervis<- paste(c("VLMCs"))
+
+tot_cpm_a09 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a09_Ependymo$Gene)
+
+tot_cpm_a09$Cluster <- paste(c("a09_Ependymo"))
+
+tot_cpm_a09$Clustervis<- paste(c("Ependymo"))
+
+tot_cpm_a10 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a10_Astro$Gene)
+
+tot_cpm_a10$Cluster <- paste(c("a10_Astro"))
+
+tot_cpm_a10$Clustervis<- paste(c("Astro"))
+
+tot_cpm_a11 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a11_Tany1$Gene)
+
+tot_cpm_a11$Cluster <- paste(c("a11_Tany1"))
+
+tot_cpm_a11$Clustervis<- paste(c("Tany1"))
+
+tot_cpm_a12 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a12_Tany2$Gene)
+
+tot_cpm_a12$Cluster <- paste(c("a12_Tany2"))
+
+tot_cpm_a12$Clustervis<- paste(c("Tany2"))
+
+tot_cpm_a13 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a13_Neurons1$Gene)
+
+tot_cpm_a13$Cluster <- paste(c("a13_Neurons1"))
+
+tot_cpm_a13$Clustervis<- paste(c("Neurons1"))
+
+tot_cpm_a14 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a14_Neurons2$Gene)
+
+tot_cpm_a14$Cluster <- paste(c("a14_Neurons2"))
+
+tot_cpm_a14$Clustervis<- paste(c("Neurons2"))
+
+tot_cpm_a15 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a15_Neurons3$Gene)
+
+tot_cpm_a15$Cluster <- paste(c("a15_Neurons3"))
+
+tot_cpm_a15$Clustervis<- paste(c("Neurons3"))
+
+tot_cpm_a16 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a16_Neurons4$Gene)
+
+tot_cpm_a16$Cluster <- paste(c("a16_Neurons4"))
+
+tot_cpm_a16$Clustervis<- paste(c("Neurons4"))
+
+tot_cpm_a17 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a17_Neurons5$Gene)
+
+tot_cpm_a17$Cluster <- paste(c("a17_Neurons5"))
+
+tot_cpm_a17$Clustervis<- paste(c("Neurons5"))
+
+tot_cpm_a18 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a18_Neurons6$Gene)
+
+tot_cpm_a18$Cluster <- paste(c("a18_Neurons6"))
+
+tot_cpm_a18$Clustervis<- paste(c("Neurons6"))
+
+tot_cpm_a19 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a19_PT1$Gene)
+
+tot_cpm_a19$Cluster <- paste(c("a19_PT1"))
+
+tot_cpm_a19$Clustervis<- paste(c("PT1"))
+
+tot_cpm_a20 <- total_cpm %>% 
+  filter(ncbi_symbol %in% a20_PT2$Gene)
+
+tot_cpm_a20$Cluster <- paste(c("a20_PT2"))
+
+tot_cpm_a20$Clustervis<- paste(c("PT2"))
+
+
+
+
+
+## need to merge all _df files and format to long format, then make graph. 
+All_tot_cpm <-rbind(total_cpm_a01, tot_cpm_a02, tot_cpm_a03, tot_cpm_a04, tot_cpm_a05, tot_cpm_a06, tot_cpm_a07, tot_cpm_a08, tot_cpm_a09, tot_cpm_a10, tot_cpm_a11, tot_cpm_a12, tot_cpm_a13, tot_cpm_a14, tot_cpm_a15, tot_cpm_a16, tot_cpm_a17, tot_cpm_a18, tot_cpm_a19, tot_cpm_a20)
+
+
+# rename a new column for visualization purposes: 
+
+All_tot_cpm <- All_tot_cpm %>% 
+  mutate(Clustercol = case_when(
+    str_detect(Clustervis,'Oligoden+')  ~ "Oligodendrocytes",
+    str_detect(Clustervis,'Endo') ~ "Endothelial cells",
+    str_detect(Clustervis,'NG2') ~ "NG2/OPC",
+    str_detect(Clustervis,'Mural') ~ "Mural cells",
+    str_detect(Clustervis,'PVM') ~ "PVMs & microglia",
+    str_detect(Clustervis,'VLMC') ~ "VLMCs",
+    str_detect(Clustervis,'Ependy') ~ "Ependymocytes",
+    str_detect(Clustervis,'Astro') ~ "Astrocytes",
+    str_detect(Clustervis,'Tany1') ~ "Tanycytes1",
+    str_detect(Clustervis,'Tany2') ~ "Tanycytes2",
+    str_detect(Clustervis,'Neuron+') ~ "Neurons",
+    str_detect(Clustervis,'PT')  ~ "Pars Tuberalis",
+    TRUE ~ NA_character_))
+
+# notice that several top expressed genes in the table is shared among the various clusters, how could that be?? 
+
+# add on symbol to inspect 
+
+All_tot_cpm_anno <- left_join(All_tot_cpm, Campbell_complete_geneid, by= c("ncbi_symbol"="mgi_symbol"))
+
+
+All_tot_cpm_stats <-All_tot_cpm %>%
+                      group_by(Cluster)%>% 
+                      summarise(mean = mean(total_cpm),
+                                sd=sd(total_cpm),
+                                margin= qt(0.975, df=n()-1)*sd(total_cpm)/sqrt(n()),
+                                lowerCI= mean(total_cpm) - qt(0.975, df=n()-1)*sd(total_cpm)/sqrt(n()),
+                                upperCI= mean(total_cpm) + qt(0.975, df=n()-1)*sd(total_cpm)/sqrt(n()),
+                                n = n())
+
+
+write_delim(All_tot_cpm_stats, "output/all_tot_cpm_stats.txt")
+
+write_delim(All_tot_cpm, "output/all_tot_cpm.txt")
+
+write_delim(All_tot_cpm_anno, "output/all_tot_cpm_annotated.txt")
+
+write_excel_csv(All_tot_cpm, "output/all_tot_cpm.csv")
+```
+
+#### Subset All present Campbell minus All clusters Average>=2 and not present Campbell
+To be able to make the total cpm plot, I subset the total cpm count for all genes that are present in Campbell and Golden hamster with the genes already used in all the 20 clusters with Average >=2.
+
+Further, from our unfiltered total cpm dataframe I subset the genes not present in Campbell, but in Golden hamster.
+
+```{r subset total cpm campbell minus clusters}
+
+
+# create venndiagrams of these intersects 
+
+# tot cpm present i campbell:
+
+tot_cpm_present_campbell<- total_cpm %>% 
+  filter(ncbi_symbol %in% Campbell_refined$mgi_symbol)%>% 
+  mutate(Cluster= paste("Present Campbell")) %>% 
+  mutate(Clustervis= paste("Present Campbell"))%>% 
+  mutate(Clustercol= paste("Present Campbell"))
+
+# tot cpm present in campbell when Average >2 in all clusters:
+
+total_cpm_Campbell_minus_Avg2 <- total_cpm %>%
+  filter(ncbi_symbol %in% Campbell_refined$mgi_symbol)%>% 
+  filter(!ncbi_symbol %in% All_tot_cpm$ncbi_symbol)%>% 
+  mutate(Cluster= paste("Present Campbell - Clusters Avg>=2")) %>% 
+  mutate(Clustervis= paste("Present Campbell -1")) %>% 
+  mutate(Clustercol= paste("Present Campbell -1"))
+
+# tot cpm present in campbell when average >= 2 in tany2 cluster (cluster12)
+
+total_cpm_tany2 <-tot_cpm_a12 %>% 
+  dplyr::select(ncbi_symbol, total_cpm) %>% 
+  mutate(Group= paste("Tany2 clust Average >=2"))
+
+total_cpm_tany1 <-tot_cpm_a11 %>% 
+  dplyr::select(ncbi_symbol, total_cpm) %>% 
+  mutate(Group= paste("Tany1 clust Average >=2"))
+
+# Absent Campbell:
+tot_cpm_not_campbel<- total_cpm %>% 
+  filter(!ncbi_symbol %in% Campbell_refined$mgi_symbol) %>% 
+  mutate(Cluster= paste("Absent Campbell"))%>% 
+  mutate(Clustervis= paste("Absent Campbell"))%>% 
+  mutate(Clustercol= paste("Absent Campbell"))
+
+
+
+
+# Merge to visualize together with all_total_cpm 
+
+df_tot_cpm_clust_pres_abs <-rbind(All_tot_cpm, total_cpm_Campbell_minus_Avg2, tot_cpm_not_campbel)
+
+write.table(df_tot_cpm_clust_pres_abs, file="output/Campbell_dataframe_tot_cpm_plot.txt")
+
+```
+
+#### Include cluster that is Astrocyte only
+
+Remove overlapping markers in Astrocyte cluster from Tany1 and Tany2 to see if impact apperance. 
+
+See that Tany1 includes 16 genes that overlap with Astro, 
+and Tany2 includes 22 genes that overlap with Astro. 
+
+Remove these 38 genes from Astro, to have a "clean" clustering. 
+
+```{r unique astrocluster}
+
+a10_Astro_overlap1 <- a10_Astro %>% 
+  filter(Gene %in% a11_Tany1$Gene)
+
+a10_Astro_unique1 <- a10_Astro %>% 
+  filter(!Gene %in% a11_Tany1$Gene)
+
+a10_Astro_overlap2 <- a10_Astro %>% 
+  filter(Gene %in% a12_Tany2$Gene)
+
+a10_Astro_unique2 <- a10_Astro %>% 
+  filter(!Gene %in% a12_Tany2$Gene)
+
+
+a10_Astro_overlap <- rbind(a10_Astro_overlap1,a10_Astro_overlap2)
+
+a10_Astro_unique <- a10_Astro %>% 
+  filter(!Gene %in% a10_Astro_overlap$Gene)%>% 
+  filter(!Gene %in% a09_Ependymo$Gene)
+
+
+tot_cpm_Ast_unique <- total_cpm %>% 
+  filter(ncbi_symbol %in% a10_Astro_unique$Gene)
+
+tot_cpm_Ast_unique$Cluster <- paste(c("Unique_Astro"))
+
+tot_cpm_Ast_unique$Clustervis<- paste(c("Unique_Astro"))
+
+tot_cpm_Ast_unique$Clustercol<- paste(c("Unique_Astro"))
+
+# Merge to visualize together with all_total_cpm 
+
+df_tot_cpm_clust_pres_abs_astrounique <-rbind(All_tot_cpm, total_cpm_Campbell_minus_Avg2, tot_cpm_not_campbel,tot_cpm_Ast_unique)
+
+write.table(df_tot_cpm_clust_pres_abs_astrounique, file="output/Campbell_dataframe_tot_cpm_plot_astunique_240131.txt")
+
+```
+
+
+
+
+```{r visualize cpm campbell plot, fig.align = 'center', out.width="90%" ,fig.cap= "\\label{fig:figs} Errordotplot of the cell specific clusters from Campbell et al. 2017 and their average total counts per million expression in our golden hamster transcriptome data."}
+
+
+df_tot_cpm_clust_pres_abs_astrounique$Clustercol <- factor(df_tot_cpm_clust_pres_abs_astrounique$Clustercol, levels = c("Oligodendrocytes", "Endothelial cells", "Mural cells", "NG2/OPC", "PVMs & microglia", "VLMCs","Ependymocytes","Astrocytes","Unique_Astro", "Tanycytes","Neurons", "Pars Tuberalis", "Present Campbell -1","Absent Campbell"))
+
+df_tot_cpm_clust_pres_abs_astrounique$Clustervis <- factor(df_tot_cpm_clust_pres_abs_astrounique$Clustervis, levels = c("Oligoden1", "Oligoden2", "Oligoden3", "Mural", "Endothel", "NG2_OPC", "PVM_micro", "VLMCs", "Ependymo", "Astro", "Unique_Astro", "Tany1", "Tany2", "Neurons1", "Neurons2", "Neurons3", "Neurons4", "Neurons5", "Neurons6", "PT1", "PT2","Present Campbell -1","Absent Campbell"))
+
+
+
+
+plot_all_cpm_clust_abs_astrounique <- ggerrorplot(data= df_tot_cpm_clust_pres_abs_astrounique ,
+                        x= "Clustervis",
+                        y= "total_cpm",
+                        color= "black",
+                        desc_stat = "mean_ci",
+                        add= "mean",
+                        error.plot = "errorbar",
+                        combine= FALSE,
+                        merge= FALSE,
+                        remove= "Astro")
+
+
+
+plot_all_cpm_clust_abs_astrounique_ed2 <-ggpar(plot_all_cpm_clust_abs_astrounique,
+       xlab= "Cell specific clusters and remaining dataset",
+       ylim= c(0,20000),
+      ylab= "Average CPM",
+      legend = "right",
+      legend.title = "Clustervis",
+      x.text.angle = 45,
+      axis.line = element_line(colour = 'black', size = 1.5),
+        text = element_text(size = 20))+
+  scale_color_manual(values = c("Ependymo" = "#fca503",
+                     "Tany1" = "#0e8214",
+                     "Tany2" = "#0e8214"))
+
+plot_all_cpm_clust_abs_astrounique_ed2
+
+
+ggsave("output/Fig1_All_tot_cpm_astrounique_240314.pdf", plot= plot_all_cpm_clust_abs_astrounique_ed2, dpi=300, width = 28, height = 14, units=c("cm") )
+
+eds3 <- plot_all_cpm_clust_abs_astrounique_ed2+
+  theme(axis.line = element_line(colour = 'black', size = 1.5),
+        text = element_text(size = 20))
+
+
+
+ggsave("output/Fig1_All_tot_cpm_default_linethick_V2_240320.pdf", plot=eds3, dpi=300, width=7, height=7)
+
+ggsave("output/Fig1_All_tot_cpm_default_linethick_V2_240320.png", plot=eds3, dpi=300, width = 12, height= 7)
+
+
+```
+
+
+add on numbering 1-22 for the figure. 
+
+```{r visualize cpm campbell plot numbered, fig.align = 'center', out.width="90%" ,fig.cap= "\\label{fig:figs} Errordotplot of the cell specific clusters from Campbell et al. 2017 and their average total counts per million expression in our golden hamster transcriptome data."}
+
+
+df_tot_cpm_clust_pres_abs_astrounique$Clustercol <- factor(df_tot_cpm_clust_pres_abs_astrounique$Clustercol, levels = c("Oligodendrocytes", "Endothelial cells", "Mural cells", "NG2/OPC", "PVMs & microglia", "VLMCs","Ependymocytes","Astrocytes","Unique_Astro", "Tanycytes1","Tanycytes2","Neurons", "Pars Tuberalis", "Present Campbell -1","Absent Campbell"))
+
+df_tot_cpm_clust_pres_abs_astrounique$Clustervis <- factor(df_tot_cpm_clust_pres_abs_astrounique$Clustervis, levels = c("Oligoden1", "Oligoden2", "Oligoden3", "Mural", "Endothel", "NG2_OPC", "PVM_micro", "VLMCs", "Ependymo", "Astro", "Unique_Astro", "Tany1", "Tany2", "Neurons1", "Neurons2", "Neurons3", "Neurons4", "Neurons5", "Neurons6", "PT1", "PT2","Present Campbell -1","Absent Campbell"))
+
+
+
+
+# nice!! 
+
+plot_all_cpm_clust_abs_astrounique <- ggerrorplot(data= df_tot_cpm_clust_pres_abs_astrounique ,
+                        x= "Clustervis",
+                        y= "total_cpm",
+                        color= "black",
+                        desc_stat = "mean_ci",
+                        add= "mean",
+                        error.plot = "errorbar",
+                        combine= FALSE,
+                        merge= FALSE,
+                        remove= "Astrocytes")
+
+
+
+plot_all_cpm_clust_abs_astrounique_ed2 <-ggpar(plot_all_cpm_clust_abs_astrounique,
+       xlab= "Cell specific clusters and remaining dataset",
+       ylim= c(0,20000),
+      ylab= "Average CPM",
+      legend = "right",
+      legend.title = "Clustervis",
+      x.text.angle = 45,
+      axis.line = element_line(colour = 'black', size = 1.5),
+        text = element_text(size = 20))+
+  scale_color_manual(values = c("Ependymo" = "#fca503",
+                     "Tany1" = "#0e8214",
+                     "Tany2" = "#0e8214"))
+
+plot_all_cpm_clust_abs_astrounique_ed2
+
+
+ggsave("output/Fig1_All_tot_cpm_astrounique_240314.pdf", plot= plot_all_cpm_clust_abs_astrounique_ed2, dpi=300, width = 28, height = 14, units=c("cm") )
+
+eds3 <- plot_all_cpm_clust_abs_astrounique_ed2+
+  theme(axis.line = element_line(colour = 'black', size = 1.5),
+        text = element_text(size = 20))
+
+
+
+ggsave("output/Fig1_All_tot_cpm_default_linethick_V2_240320.pdf", plot=eds3, dpi=300, width=7, height=7)
+
+ggsave("output/Fig1_All_tot_cpm_default_linethick_V2_240320.png", plot=eds3, dpi=300, width = 12, height= 7)
+
+
+```
+
+Redo with pooled clustermarkers for celltype with several subclusters. i.e. use clustercol. and use mean +- SEM not CI. 
+
+```{r redo for figure1 cpm plot}
+
+
+df_tot_cpm_clust_pres_abs_astrounique$Clustercol <- factor(df_tot_cpm_clust_pres_abs_astrounique$Clustercol, levels = c("Oligodendrocytes", "Endothelial cells", "Mural cells", "NG2/OPC", "PVMs & microglia", "VLMCs","Ependymocytes","Astrocytes","Unique_Astro", "Tanycytes1","Tanycytes2","Neurons", "Pars Tuberalis", "Present Campbell -1","Absent Campbell"))
+
+
+df_tot_cpm_clust_pres_abs_astrounique_edit <- df_tot_cpm_clust_pres_abs_astrounique %>% 
+  filter(!Clustercol == "Astrocytes") %>% 
+  mutate(Clustercol, factor(Clustercol,levels = c("Oligodendrocytes", "Endothelial cells", "Mural cells", "NG2/OPC", "PVMs & microglia", "VLMCs","Ependymocytes","Unique_Astro", "Tanycytes1","Tanycytes2","Neurons", "Pars Tuberalis", "Present Campbell -1","Absent Campbell"))) %>% 
+  mutate(numeric_label = as.numeric(factor(Clustercol, levels = unique(Clustercol))))
+
+
+
+plot_all_cpm_clust_abs_astrounique_edit <- ggerrorplot(data= df_tot_cpm_clust_pres_abs_astrounique_edit ,
+                        x= "Clustercol",
+                        y= "total_cpm",
+                        color= "black",
+                        desc_stat = "mean_se",
+                        add= "mean",
+                        error.plot = "errorbar",
+                        combine= FALSE,
+                        merge= FALSE)
+
+
+
+plot_all_cpm_clust_abs_astrounique_ed2 <-ggpar(plot_all_cpm_clust_abs_astrounique_edit,
+       xlab= "Cell specific clusters and remaining dataset",
+       ylim= c(0,20000),
+      ylab= "Average CPM",
+      legend = "right",
+      legend.title = "Clustercol",
+      x.text.angle = 45,
+      axis.line = element_line(colour = 'black', size = 1.5),
+        text = element_text(size = 20))+
+  scale_color_manual(values = c("Ependymo" = "#fca503",
+                     "Tany1" = "#0e8214",
+                     "Tany2" = "#0e8214"))
+
+plot_all_cpm_clust_abs_astrounique_ed2
+
+
+eds3 <- plot_all_cpm_clust_abs_astrounique_ed2+
+  theme(axis.line = element_line(colour = 'black', size = 1.5),
+        text = element_text(size = 20))
+
+eds3
+
+ggsave("output/Fig1_All_tot_cpm_default_linethick_V2_240415.pdf", plot=eds3, dpi=300, width=7, height=7)
+
+ggsave("output/Fig1_All_tot_cpm_default_linethick_V2_240415.png", plot=eds3, dpi=300, width = 12, height= 7)
+
+```
+
+
+
+##### Redo graph per group
+Would be interesting to see how this splits up per group. 
+
+
+```{r campbell plot per group, fig.align = 'center', out.width="90%" ,fig.cap= "\\label{fig:figs} Errordotplot of the cell specific clusters from Campbell et al. 2017 and their average total counts per million expression in our golden hamster transcriptome data within each group."}
+
+# Need to go back and compute total cpm per group, then subset by this and voila:
+
+
+# Go back to cpm dataframe, sum per group:
+
+total_cpm_gr <- tb_cpm %>% 
+  mutate(Prehib = rowSums(across(c(2:6))),
+         Nonhib = rowSums(across(c(7:12))),
+         IBA = rowSums(across(c(13:17))),
+         Torpid = rowSums(across(c(18:23))),
+         Posthib =rowSums(across(c(24:28))),
+         LP = rowSums(across(c(29:34)))) %>% 
+  dplyr::select(ncbi_symbol , 35:40)
+
+
+
+# Pivot into longer format, total cpm as numeric column, name to group 
+
+
+total_cpm_gr_long <- total_cpm_gr %>% 
+  right_join(df_tot_cpm_clust_pres_abs_astrounique) %>% 
+  pivot_longer(cols = 2:7, 
+               values_to = "tot_gr_cpm",
+               names_to = "Group")
+
+
+
+
+# filter/right_join with df_tot_cpm_clust_pres_abs
+
+# sort out apperance of clusters and group
+
+total_cpm_gr_long$Group <- factor(total_cpm_gr_long$Group, levels = c("Prehib", "Nonhib","IBA","Torpid","Posthib","LP"))
+
+total_cpm_gr_long$Clustercol <- factor(total_cpm_gr_long$Clustercol, levels = c("Oligodendrocytes", "Endothelial cells", "Mural cells", "NG2/OPC", "PVMs & microglia", "VLMCs","Ependymocytes","Astrocytes","Unique_Astro", "Tanycytes","Neurons", "Pars Tuberalis", "Present Campbell -1","Absent Campbell"))
+
+total_cpm_gr_long$Clustervis <- factor(total_cpm_gr_long$Clustervis, levels = c("Oligoden1", "Oligoden2", "Oligoden3", "Mural", "Endothel", "NG2_OPC", "PVM_micro", "VLMCs", "Ependymo", "Astro", "Unique_Astro", "Tany1", "Tany2", "Neurons1", "Neurons2", "Neurons3", "Neurons4", "Neurons5", "Neurons6", "PT1", "PT2","Present Campbell -1","Absent Campbell"))
+
+plot_all_cpm_clust_abs_gr <- ggerrorplot(data= total_cpm_gr_long ,
+                        x= "Clustervis",
+                        y= "tot_gr_cpm",
+                        color= "Group",
+                        desc_stat = "mean_ci",
+                        add= "mean",
+                        error.plot = "errorbar",
+                        combine= FALSE,
+                        merge= FALSE)
+
+
+
+plot_all_cpm_clust_abs_gr_ed2 <-ggpar(plot_all_cpm_clust_abs_gr,
+       xlab= "Cell specific clusters and remaining dataset",
+      ylab= "Average total cpm per group",
+      legend = "top",
+      legend.title = "Group",
+      x.text.angle = 45,
+      axis.line = element_line(colour = 'black', size = 1.5),
+        text = element_text(size = 20))
+
+plot_all_cpm_clust_abs_gr_ed2
+
+
+ggsave("output/Fig1_All_tot_cpm_per_gr_240314.pdf", plot= plot_all_cpm_clust_abs_gr_ed2, dpi=300, width = 28, height = 14, units=c("cm") )
+
+ggsave("output/Fig1_All_tot_cpm_per_gr_240314.png", plot= plot_all_cpm_clust_abs_gr_ed2, dpi=300, width = 28, height = 14, units=c("cm") )
+
+
+```
+
+This is summing counts per million per group, so LP (n=6) with more individuals will have more counts vs Prehib (n=5). Better to look at average cpm per group, to account for differences in individuals between groups.
+
+```{r cluster specific expression per mean group cpm, fig.align = 'center', out.width="90%" ,fig.cap= "\\label{fig:figs} Errordotplot of the cell specific clusters from Campbell et al. 2017 and their average total counts per million expression in our golden hamster transcriptome data on group averages total cpm."}
+
+mean_total_cpm_gr <- tb_cpm %>% 
+   mutate(Prehib = rowMeans(across(c(2:6))),
+         Nonhib = rowMeans(across(c(7:12))),
+         IBA = rowMeans(across(c(13:17))),
+         Torpid = rowMeans(across(c(18:23))),
+         Posthib =rowMeans(across(c(24:28))),
+         LP = rowMeans(across(c(29:34)))) %>% 
+  dplyr::select(ncbi_symbol , 35:40)
+
+
+
+# Pivot into longer format, total cpm as numeric column, name to group 
+
+
+mean_total_cpm_gr_long <- mean_total_cpm_gr %>% 
+  right_join(df_tot_cpm_clust_pres_abs_astrounique) %>% 
+  pivot_longer(cols = 2:7, 
+               values_to = "mean_tot_gr_cpm",
+               names_to = "Group")
+
+
+
+
+# filter/right_join with df_tot_cpm_clust_pres_abs
+
+# sort out apperance of clusters and group
+
+
+mean_total_cpm_gr_long$Group <- factor(mean_total_cpm_gr_long$Group, levels = c("Prehib", "Nonhib","IBA","Torpid","Posthib","LP"))
+
+mean_total_cpm_gr_long$Clustercol <- factor(mean_total_cpm_gr_long$Clustercol, levels = c("Oligodendrocytes", "Endothelial cells", "Mural cells", "NG2/OPC", "PVMs & microglia", "VLMCs","Ependymocytes","Astrocytes","Unique_Astro", "Tanycytes","Neurons", "Pars Tuberalis", "Present Campbell -1","Absent Campbell"))
+
+mean_total_cpm_gr_long$Clustervis <- factor(mean_total_cpm_gr_long$Clustervis, levels = c("Oligoden1", "Oligoden2", "Oligoden3", "Mural", "Endothel", "NG2_OPC", "PVM_micro", "VLMCs", "Ependymo", "Astro", "Unique_Astro", "Tany1", "Tany2", "Neurons1", "Neurons2", "Neurons3", "Neurons4", "Neurons5", "Neurons6", "PT1", "PT2","Present Campbell -1","Absent Campbell"))
+
+plot_mean_gr_cpm_clust_abs <- ggerrorplot(data= mean_total_cpm_gr_long ,
+                        x= "Clustervis",
+                        y= "mean_tot_gr_cpm",
+                        color= "Group",
+                        desc_stat = "mean_ci",
+                        add= "mean",
+                        error.plot = "errorbar",
+                        combine= FALSE,
+                        merge= FALSE)
+
+
+
+plot_mean_gr_cpm_clust_abs_ed2 <-ggpar(plot_mean_gr_cpm_clust_abs,
+       xlab= "Cell specific clusters and remaining dataset",
+      ylab= "Groupwise mean total cpm \n & average expression per cluster",
+      legend = "top",
+      legend.title = "Groups",
+      x.text.angle = 45,
+      axis.line = element_line(colour = 'black', size = 1.5),
+        text = element_text(size = 20))
+
+plot_mean_gr_cpm_clust_abs_ed2 
+
+
+ggsave("output/Fig1_All_mean_tot_cpm_per_gr_240314.pdf", plot= plot_mean_gr_cpm_clust_abs_ed2 , dpi=300, width = 28, height = 14, units=c("cm") )
+
+```
+#### Include cluster that is Astrocyte only
+
+Remove overlapping markers in Astrocyte cluster from Tany1 and Tany2 to see if impact apperance. 
+
+See that Tany1 includes 16 genes that overlap with Astro, 
+and Tany2 includes 22 genes that overlap with Astro. 
+
+Remove these 38 genes from Astro, to have a "clean" clustering. 
+
+Notice that the ependymo & Unqiue Astro is similar in shape, check overlap, 29 genes overlap between ependymo and astro, 12 genes overlap between Unique_astro and Ependymo
+
+
+#### Create heatmap for the 4 most expressed clusters to see if some genes drive the pattern
+
+##### VLMCs - not relevant anymore
+What is it?
+How is the expression patterns matching phenotype?
+
+```{r heatmap top 4 exp clust VLMCs}
+
+
+df_vlmcs_hm <- as_tibble(cpm_gr, rownames = "Symbol") %>% 
+  filter(Symbol %in% tot_cpm_a08$ncbi_symbol)
+  
+mt_vlmcs <- as_tibble(cpm_gr, rownames = "Symbol") %>% 
+  filter(Symbol %in% tot_cpm_a08$ncbi_symbol) %>% 
+  relocate(LP2, Prehib, Nonhib, IBA, Torpid, Posthib) %>% 
+  column_to_rownames(var="Symbol")
+
+
+
+
+
+ mt_vlmcs_rowscaled <- t( scale(t(mt_vlmcs), center = TRUE, scale = TRUE) )
+ 
+ hm_mt_vlmcs <- Heatmap(  mt_vlmcs_rowscaled,
+                         name = "z-score",
+                          col = viridis::viridis(100),            
+                          show_row_names = TRUE,
+                          cluster_columns = FALSE,
+                          cluster_rows = TRUE,
+                          show_row_dend = FALSE,
+                          column_names_side = c("bottom","top"),
+                          column_names_rot = 0,
+                          column_names_centered = TRUE, 
+                          row_title_rot = 0)
+
+
+
+
+ pdf(file="output/heatmap_vlmcs_cluster_per_gr_240125.pdf", width = 14, height=21)
+ draw(  hm_mt_vlmcs )
+ dev.off()
+
+ draw(  hm_mt_vlmcs )
+```
+
+##### Ependymocytes 
+
+```{r heatmap top 4 exp clust ependy}
+
+
+df_ependy_hm <- as_tibble(cpm_gr, rownames = "Symbol") %>% 
+  filter(Symbol %in% tot_cpm_a09$ncbi_symbol)
+  
+mt_ependy <- as_tibble(cpm_gr, rownames = "Symbol") %>% 
+  filter(Symbol %in% tot_cpm_a09$ncbi_symbol) %>% 
+  relocate(LP2, Prehib, Nonhib, IBA, Torpid, Posthib) %>% 
+  column_to_rownames(var="Symbol")
+
+
+
+
+
+ mt_ependy_rowscaled <- t( scale(t(mt_ependy), center = TRUE, scale = TRUE) )
+ 
+ hm_mt_ependy <- Heatmap(  mt_ependy_rowscaled,
+                         name = "z-score",
+                          col = viridis::viridis(100),            
+                          show_row_names = TRUE,
+                          cluster_columns = FALSE,
+                          cluster_rows = TRUE,
+                          show_row_dend = FALSE,
+                          column_names_side = c("bottom","top"),
+                          column_names_rot = 0,
+                          column_names_centered = TRUE, 
+                          row_title_rot = 0)
+
+
+
+
+ pdf(file="output/heatmap_ependy_cluster_per_gr_240125.pdf", width = 14, height=28)
+ draw(  hm_mt_ependy )
+ dev.off()
+
+ draw(  hm_mt_ependy )
+```
+##### Astrocytes
+
+```{r heatmap top 4 exp clust ependy}
+
+
+df_Astro_hm <- as_tibble(cpm_gr, rownames = "Symbol") %>% 
+  filter(Symbol %in% tot_cpm_a10$ncbi_symbol)
+  
+mt_Astro <- as_tibble(cpm_gr, rownames = "Symbol") %>% 
+  filter(Symbol %in% tot_cpm_a10$ncbi_symbol) %>% 
+  relocate(LP2, Prehib, Nonhib, IBA, Torpid, Posthib) %>% 
+  column_to_rownames(var="Symbol")
+
+
+
+
+
+ mt_Astro_rowscaled <- t( scale(t(mt_Astro), center = TRUE, scale = TRUE) )
+ 
+ hm_mt_Astro <- Heatmap(  mt_Astro_rowscaled,
+                         name = "z-score",
+                          col = viridis::viridis(100),            
+                          show_row_names = TRUE,
+                          cluster_columns = FALSE,
+                          cluster_rows = TRUE,
+                          show_row_dend = FALSE,
+                          column_names_side = c("bottom","top"),
+                          column_names_rot = 0,
+                          column_names_centered = TRUE, 
+                          row_title_rot = 0)
+
+
+
+
+ pdf(file="output/heatmap_Astro_cluster_per_gr_240123.pdf", width = 14, height=21)
+ draw(  hm_mt_Astro )
+ dev.off()
+
+ draw(  hm_mt_Astro )
+```
+
+##### Tany1
+
+```{r heatmap top 4 exp clust tany1}
+
+
+df_tany1_hm <- as_tibble(cpm_gr, rownames = "Symbol") %>% 
+  filter(Symbol %in% tot_cpm_a11$ncbi_symbol)
+  
+mt_tany1 <- as_tibble(cpm_gr, rownames = "Symbol") %>% 
+  filter(Symbol %in% tot_cpm_a11$ncbi_symbol) %>% 
+  relocate(LP2, Prehib, Nonhib, IBA, Torpid, Posthib) %>% 
+  column_to_rownames(var="Symbol")
+
+
+
+
+
+ mt_tany1_rowscaled <- t( scale(t(mt_tany1), center = TRUE, scale = TRUE) )
+ 
+ hm_mt_tany1 <- Heatmap(  mt_tany1_rowscaled,
+                         name = "z-score",
+                          col = viridis::viridis(100),            
+                          show_row_names = TRUE,
+                          cluster_columns = FALSE,
+                          cluster_rows = TRUE,
+                          show_row_dend = FALSE,
+                          column_names_side = c("bottom","top"),
+                          column_names_rot = 0,
+                          column_names_centered = TRUE, 
+                          row_title_rot = 0)
+
+
+
+
+ pdf(file="output/heatmap_tany1_cluster_per_gr_240123.pdf", width = 14, height=21)
+ draw(  hm_mt_tany1 )
+ dev.off()
+
+ draw(  hm_mt_tany1 )
+```
+##### Tany2
+
+```{r heatmap top 4 exp clust tany2}
+
+
+df_tany2_hm <- as_tibble(cpm_gr, rownames = "Symbol") %>% 
+  filter(Symbol %in% tot_cpm_a12$ncbi_symbol)
+  
+mt_tany2 <- as_tibble(cpm_gr, rownames = "Symbol") %>% 
+  filter(Symbol %in% tot_cpm_a12$ncbi_symbol) %>% 
+  relocate(LP2, Prehib, Nonhib, IBA, Torpid, Posthib) %>% 
+  column_to_rownames(var="Symbol")
+
+
+
+
+
+ mt_tany2_rowscaled <- t( scale(t(mt_tany2), center = TRUE, scale = TRUE) )
+ 
+ hm_mt_tany2 <- Heatmap(  mt_tany2_rowscaled,
+                         name = "z-score",
+                          col = viridis::viridis(100),            
+                          show_row_names = TRUE,
+                          cluster_columns = FALSE,
+                          cluster_rows = TRUE,
+                          show_row_dend = FALSE,
+                          column_names_side = c("bottom","top"),
+                          column_names_rot = 0,
+                          column_names_centered = TRUE, 
+                          row_title_rot = 0)
+
+
+
+
+ pdf(file="output/heatmap_tany2_cluster_per_gr_240123.pdf", width = 14, height=21)
+ draw(  hm_mt_tany2 )
+ dev.off()
+
+ draw(  hm_mt_tany2 )
+```
+
+
+
+
+
+
+
+
+
+
